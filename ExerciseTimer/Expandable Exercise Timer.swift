@@ -33,13 +33,14 @@ struct ExerciseListView: View {
     @State private var exportURL: URL?
 #if os(iOS)
     @State private var keepScreenAwake = false
+    @State private var enableBackgroundAudio = false
 #endif
     
     var body: some View {
         NavigationStack {
 #if os(iOS)
             if isWorkoutActive {
-                WorkoutView(exercises: exercises, isActive: $isWorkoutActive, keepScreenAwake: $keepScreenAwake)
+                WorkoutView(exercises: exercises, isActive: $isWorkoutActive, keepScreenAwake: $keepScreenAwake, enableBackgroundAudio: $enableBackgroundAudio)
             } else {
                 builderView
             }
@@ -82,11 +83,20 @@ struct ExerciseListView: View {
             }
 
 #if os(iOS)
-            Section {
+            Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
                 Toggle(isOn: $keepScreenAwake) {
                     HStack {
                         Image(systemName: keepScreenAwake ? "moon.zzz.fill" : "moon.zzz")
                         Text("Keep Screen Awake")
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+            Section(footer: Text("Keeps a low-level audio session active so timers and sounds continue while the screen is locked or the app is backgrounded. May increase battery usage.")) {
+                Toggle(isOn: $enableBackgroundAudio) {
+                    HStack {
+                        Image(systemName: enableBackgroundAudio ? "speaker.wave.2.fill" : "speaker.slash")
+                        Text("Background Audio")
                     }
                 }
                 .toggleStyle(.switch)
@@ -394,6 +404,7 @@ struct WorkoutView: View {
     @Binding var isActive: Bool
 #if os(iOS)
     @Binding var keepScreenAwake: Bool
+    @Binding var enableBackgroundAudio: Bool
 #endif
     
     @State private var currentExerciseIndex = 0
@@ -408,7 +419,10 @@ struct WorkoutView: View {
     @State private var isExiting = false
     
     let audioEngine = AVAudioEngine()
-    // Removed silentPlayer property
+#if os(iOS)
+    private let backgroundPlayerNode = AVAudioPlayerNode()
+    @State private var isBackgroundLoopRunning = false
+#endif
     
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     @Environment(\.scenePhase) private var scenePhase
@@ -494,7 +508,7 @@ struct WorkoutView: View {
                     .padding()
                 }
 #if os(iOS)
-                // Two-row layout in compact width: first row Pause/Cancel, second row Awake
+                // Two-row layout in compact width: first row Pause/Cancel, second row Awake and Background Audio
                 Group {
                     if horizontalSizeClass == .compact {
                         VStack(spacing: 12) {
@@ -504,6 +518,7 @@ struct WorkoutView: View {
                             }
                             HStack(spacing: 16) {
                                 awakeButton
+                                backgroundAudioButton
                             }
                         }
                     } else {
@@ -511,6 +526,7 @@ struct WorkoutView: View {
                             pauseResumeButton
                             cancelButton
                             awakeButton
+                            backgroundAudioButton
                         }
                     }
                 }
@@ -537,13 +553,15 @@ struct WorkoutView: View {
         .onAppear {
 #if os(iOS)
             configureAudioSession()
+            if enableBackgroundAudio {
+                startBackgroundAudioLoop()
+            }
 #endif
             requestNotificationPermission()
             startCurrentPhase()
 #if os(iOS)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
-            // Removed startBackgroundAudioLoop() call
         }
         .alert("Reps Complete?", isPresented: $showingRepCompletion) {
             Button("Yes", action: advanceWorkout)
@@ -565,22 +583,35 @@ struct WorkoutView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                // Recompute remaining time from end date when app becomes active
-                timeRemaining = max(0, phaseEndDate.timeIntervalSince(.now))
+                let remaining = phaseEndDate.timeIntervalSinceNow
+                if (currentExercise.isTimeBased || isResting) && remaining <= 0 {
+                    timerExpired()
+                } else {
+                    timeRemaining = max(0, remaining)
+                }
             }
         }
 #if os(iOS)
         .onChange(of: keepScreenAwake) { _, newValue in
             UIApplication.shared.isIdleTimerDisabled = newValue
         }
+        .onChange(of: enableBackgroundAudio) { _, newValue in
+            if newValue {
+                startBackgroundAudioLoop()
+            } else {
+                stopBackgroundAudioLoop()
+            }
+        }
 #endif
         .onDisappear {
             cancelPhaseEndNotification()
+#if os(iOS)
+            stopBackgroundAudioLoop()
+#endif
             if audioEngine.isRunning { audioEngine.stop() }
 #if os(iOS)
             UIApplication.shared.isIdleTimerDisabled = false
 #endif
-            // Removed stopBackgroundAudioLoop() call
         }
     }
     
@@ -594,8 +625,10 @@ struct WorkoutView: View {
         showingRepCompletion = false
         // Stop notifications and audio synchronously
         cancelPhaseEndNotification()
+#if os(iOS)
+        stopBackgroundAudioLoop()
+#endif
         if audioEngine.isRunning { audioEngine.stop() }
-        // Removed stopBackgroundAudioLoop() call
 #if os(iOS)
         UIApplication.shared.isIdleTimerDisabled = false
 #endif
@@ -781,6 +814,21 @@ struct WorkoutView: View {
             .cornerRadius(12)
         }
     }
+    
+    private var backgroundAudioButton: some View {
+        Button(action: { enableBackgroundAudio.toggle() }) {
+            HStack {
+                Image(systemName: enableBackgroundAudio ? "speaker.wave.2.fill" : "speaker.slash")
+                Text(enableBackgroundAudio ? "BG Audio On" : "BG Audio Off")
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(enableBackgroundAudio ? Color.green : Color.gray)
+            .cornerRadius(12)
+        }
+    }
 #endif
 
     private var pauseResumeButton: some View {
@@ -821,9 +869,43 @@ struct WorkoutView: View {
     }
 #endif
     
-    // Removed startBackgroundAudioLoop() function
-    
-    // Removed stopBackgroundAudioLoop() function
+#if os(iOS)
+    private func startBackgroundAudioLoop() {
+        guard !isBackgroundLoopRunning else { return }
+        let sampleRate: Double = 44100
+        let durationSeconds: Double = 1.0
+        let frames = AVAudioFrameCount(sampleRate * durationSeconds)
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        do {
+            if !audioEngine.attachedNodes.contains(backgroundPlayerNode) {
+                audioEngine.attach(backgroundPlayerNode)
+                audioEngine.connect(backgroundPlayerNode, to: audioEngine.mainMixerNode, format: format)
+            }
+            if !audioEngine.isRunning {
+                try audioEngine.start()
+            }
+        } catch {
+            print("Audio engine start failed: \(error)")
+            return
+        }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
+        buffer.frameLength = frames
+        if let channel = buffer.floatChannelData?[0] {
+            // Fill with very low-amplitude noise to keep the session alive
+            let count = Int(buffer.frameLength)
+            for i in 0..<count { channel[i] = 0.00001 * ((i % 2 == 0) ? 1.0 : -1.0) }
+        }
+        backgroundPlayerNode.play()
+        backgroundPlayerNode.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+        isBackgroundLoopRunning = true
+    }
+
+    private func stopBackgroundAudioLoop() {
+        guard isBackgroundLoopRunning else { return }
+        backgroundPlayerNode.stop()
+        isBackgroundLoopRunning = false
+    }
+#endif
     
 #if os(iOS)
     func requestNotificationPermission() {
@@ -860,6 +942,9 @@ struct WorkoutView: View {
         isCompleted = true
         isResting = false
         cancelPhaseEndNotification()
+#if os(iOS)
+        stopBackgroundAudioLoop()
+#endif
         if audioEngine.isRunning { audioEngine.stop() }
 #if os(iOS)
         UIApplication.shared.isIdleTimerDisabled = false

@@ -27,10 +27,10 @@ Features
 - visionOS 26.2 or later
 
 ## Installation
-Download from [Test Flight](https://testflight.apple.com/join/mRp4ySuZ) (App Store coming ... eventually)
+[![Download on the App Store](https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83)](https://apps.apple.com/us/app/expandableexercisetimer/id6756544631)
 
 ## Support
-If you encounter any issues or have feature requests, you can submit them through Test Flight's feedback. Or if you have a GitHub account, you can open an issue on this repository.
+If you encounter any issues or have feature requests, you can leave a review in the App Store, message me on [Mastadon](https://mastodon.social/@bigdoodr), email me at the address below. Or if you have a GitHub account, you can open an issue on this repository.
 
 ## Privacy
 This app does not collect or transmit any personal data. All workout routines are stored locally on your device (or whatever cloud storage services you have setup on your device).
