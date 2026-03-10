@@ -7,6 +7,13 @@ import UserNotifications
 import UniformTypeIdentifiers
 internal import Combine
 
+fileprivate struct WorkoutUndoAction: Codable {
+    let exerciseIndex: Int
+    let setBefore: Int
+    let wasResting: Bool
+    let advancedExercise: Bool
+}
+
 @main
 struct ExerciseTimerApp: App {
     var body: some Scene {
@@ -16,7 +23,7 @@ struct ExerciseTimerApp: App {
     }
 }
 
-struct Exercise: Identifiable, Codable {
+struct Exercise: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String = ""
     var isTimeBased: Bool = true
@@ -35,6 +42,9 @@ struct ExerciseListView: View {
     @State private var keepScreenAwake = false
     @State private var enableBackgroundAudio = false
 #endif
+    @State private var showingResetConfirm = false
+    
+    private let exercisesDefaultsKey = "savedExercises"
     
     var body: some View {
         NavigationStack {
@@ -56,63 +66,14 @@ struct ExerciseListView: View {
     
     private var builderView: some View {
         List {
-            Section {
-                ForEach(Array(exercises.enumerated()), id: \.element.id) { index, _ in
-                    ExerciseEntryView(exercise: $exercises[index])
-                }
-                .onMove { indices, newOffset in
-                    exercises.move(fromOffsets: indices, toOffset: newOffset)
-                }
-                .onDelete { indexSet in
-                    exercises.remove(atOffsets: indexSet)
-                }
-            }
-
-            Section {
-                Button(action: {
-                    exercises.append(Exercise())
-                }) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add Exercise")
-                    }
-                    .font(.headline)
-                    .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-            }
-
+            exerciseListSection
+            addExerciseSection
 #if os(iOS)
-            Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
-                Toggle(isOn: $keepScreenAwake) {
-                    HStack {
-                        Image(systemName: keepScreenAwake ? "moon.zzz.fill" : "moon.zzz")
-                        Text("Keep Screen Awake")
-                    }
-                }
-                .toggleStyle(.switch)
-            }
-            Section(footer: Text("Keeps a low-level audio session active so timers and sounds continue while the screen is locked or the app is backgrounded. May increase battery usage.")) {
-                Toggle(isOn: $enableBackgroundAudio) {
-                    HStack {
-                        Image(systemName: enableBackgroundAudio ? "speaker.wave.2.fill" : "speaker.slash")
-                        Text("Background Audio")
-                    }
-                }
-                .toggleStyle(.switch)
-            }
+            keepAwakeSection
+            backgroundAudioSection
 #endif
-            Section {
-                Button(action: { isWorkoutActive = true }) {
-                    HStack {
-                        Image(systemName: "play.fill")
-                        Text("Start Workout")
-                    }
-                    .font(.headline)
-                    .foregroundStyle(.green)
-                }
-                .buttonStyle(.plain)
-            }
+            resetSection
+            startSection
         }
 #if os(iOS)
         .listStyle(.insetGrouped)
@@ -131,7 +92,7 @@ struct ExerciseListView: View {
                     .accessibilityLabel("Import")
                 Button(action: exportExercises) { Image(systemName: "square.and.arrow.up") }
                     .accessibilityLabel("Export")
-                Button(action: { exercises = [Exercise()] }) { Image(systemName: "arrow.counterclockwise") }
+                Button(action: { showingResetConfirm = true }) { Image(systemName: "arrow.counterclockwise") }
                     .accessibilityLabel("Reset")
             }
         }
@@ -141,9 +102,118 @@ struct ExerciseListView: View {
         .fileExporter(isPresented: $showingExporter, document: ExerciseDocument(exercises: exercises), contentType: .json, defaultFilename: "exercises.json") { result in
             if case .success = result { exportURL = nil }
         }
+        .alert("Reset Exercises?", isPresented: $showingResetConfirm) {
+            Button("Reset", role: .destructive) { exercises = [Exercise()]; persistExercises() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove all exercises in the builder.")
+        }
+        .onAppear {
+            if exercises.count == 1 && exercises.first?.name == "" && exercises.first?.isTimeBased == true && exercises.first?.sets == 1 && exercises.first?.exerciseDuration == 30 && exercises.first?.restDuration == 10 {
+                loadSavedExercises()
+            }
+        }
+        .onChange(of: exercises) { _, _ in
+            persistExercises()
+        }
+    }
+    
+    @ViewBuilder
+    private var exerciseListSection: some View {
+        Section {
+            ForEach(Array(exercises.indices), id: \.self) { index in
+                ExerciseEntryRow(exercise: $exercises[index])
+            }
+            .onMove { (indices: IndexSet, newOffset: Int) in
+                exercises.move(fromOffsets: indices, toOffset: newOffset)
+            }
+            .onDelete { (indexSet: IndexSet) in
+                exercises.remove(atOffsets: indexSet)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var addExerciseSection: some View {
+        Section {
+            Button(action: {
+                exercises.append(Exercise())
+            }) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                    Text("Add Exercise")
+                }
+                .font(.headline)
+                .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+    
+#if os(iOS)
+    @ViewBuilder
+    private var keepAwakeSection: some View {
+        Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
+            Toggle(isOn: $keepScreenAwake) {
+                HStack {
+                    Image(systemName: keepScreenAwake ? "moon.zzz.fill" : "moon.zzz")
+                    Text("Keep Screen Awake")
+                }
+            }
+            .toggleStyle(.switch)
+        }
+    }
+    
+    @ViewBuilder
+    private var backgroundAudioSection: some View {
+        Section(footer: Text("Keeps a low-level audio session active so timers and sounds continue while the screen is locked or the app is backgrounded. May increase battery usage.")) {
+            Toggle(isOn: $enableBackgroundAudio) {
+                HStack {
+                    Image(systemName: enableBackgroundAudio ? "speaker.wave.2.fill" : "speaker.slash")
+                    Text("Background Audio")
+                }
+            }
+            .toggleStyle(.switch)
+        }
+    }
+#endif
+    
+    @ViewBuilder
+    private var resetSection: some View {
+        Section {
+            Button(action: { showingResetConfirm = true }) {
+                Image(systemName: "arrow.counterclockwise")
+            }
+            .accessibilityLabel("Reset")
+        }
+    }
+    
+    @ViewBuilder
+    private var startSection: some View {
+        Section {
+            Button(action: { isWorkoutActive = true }) {
+                HStack {
+                    Image(systemName: "play.fill")
+                    Text("Start Workout")
+                }
+                .font(.headline)
+                .foregroundStyle(.green)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+    
+    // Helper row to reduce type-checker load
+    private struct ExerciseEntryRow: View {
+        @Binding var exercise: Exercise
+
+        var body: some View {
+            ExerciseEntryView(exercise: $exercise)
+        }
     }
     
     func exportExercises() {
+        persistExercises()
         showingExporter = true
     }
     
@@ -161,8 +231,23 @@ struct ExerciseListView: View {
             let data = try Data(contentsOf: url)
             let decoded = try JSONDecoder().decode([Exercise].self, from: data)
             exercises = decoded
+            persistExercises()
         } catch {
             print("Failed to import: \(error)")
+        }
+    }
+    
+    private func loadSavedExercises() {
+        if let data = UserDefaults.standard.data(forKey: exercisesDefaultsKey) {
+            if let decoded = try? JSONDecoder().decode([Exercise].self, from: data) {
+                exercises = decoded
+            }
+        }
+    }
+    
+    private func persistExercises() {
+        if let data = try? JSONEncoder().encode(exercises) {
+            UserDefaults.standard.set(data, forKey: exercisesDefaultsKey)
         }
     }
 }
@@ -413,10 +498,12 @@ struct WorkoutView: View {
     @State private var isPaused = false
     @State private var timeRemaining: TimeInterval = 0
     @State private var phaseEndDate: Date = .now
-    @State private var showingRepCompletion = false
     @State private var showingCompletion = false
     @State private var isCompleted = false
     @State private var isExiting = false
+    
+    @State private var undoAction: WorkoutUndoAction? = nil
+    @State private var showUndoToast = false
     
     let audioEngine = AVAudioEngine()
 #if os(iOS)
@@ -493,7 +580,7 @@ struct WorkoutView: View {
                             .foregroundStyle(.secondary)
                         
                         Button(action: {
-                            showingRepCompletion = true
+                            repsCompleteTapped()
                         }) {
                             Text("Reps Complete")
                                 .font(.headline)
@@ -563,10 +650,6 @@ struct WorkoutView: View {
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
         }
-        .alert("Reps Complete?", isPresented: $showingRepCompletion) {
-            Button("Yes", action: advanceWorkout)
-            Button("Cancel", role: .cancel) {}
-        }
         .alert("Workout Complete!", isPresented: $showingCompletion) {
             Button("Done") {
                 isExiting = true
@@ -613,6 +696,28 @@ struct WorkoutView: View {
             UIApplication.shared.isIdleTimerDisabled = false
 #endif
         }
+        .overlay(alignment: .bottom) {
+            if showUndoToast {
+                HStack {
+                    Text("Set added")
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button("Undo") {
+                        undoLastAction()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white)
+                    .bold()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.black.opacity(0.8))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.bottom, 24)
+                .padding(.horizontal)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
     }
     
     private func beginExit() {
@@ -622,7 +727,6 @@ struct WorkoutView: View {
         isCompleted = true
         isResting = false
         showingCompletion = false
-        showingRepCompletion = false
         // Stop notifications and audio synchronously
         cancelPhaseEndNotification()
 #if os(iOS)
@@ -783,6 +887,43 @@ struct WorkoutView: View {
                 }
             }
         }
+    }
+    
+    func repsCompleteTapped() {
+        // immediate advance for rep-based exercises with undo capture
+        guard !currentExercise.isTimeBased else { return }
+        let prevExerciseIndex = currentExerciseIndex
+        let prevSet = currentSet
+        let prevWasResting = isResting
+        // Determine whether this tap will advance to next exercise immediately (no rest)
+        let willAdvanceExercise: Bool = {
+            if currentSet < currentExercise.sets { return false }
+            if currentExercise.restDuration > 0 { return false }
+            return true
+        }()
+        advanceWorkout()
+        undoAction = WorkoutUndoAction(exerciseIndex: prevExerciseIndex, setBefore: prevSet, wasResting: prevWasResting, advancedExercise: willAdvanceExercise)
+        withAnimation { showUndoToast = true }
+        // Auto-hide after 4 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            withAnimation { showUndoToast = false }
+        }
+    }
+
+    func undoLastAction() {
+        guard let action = undoAction else { return }
+        cancelPhaseEndNotification()
+        // Revert to the captured state
+        currentExerciseIndex = action.exerciseIndex
+        currentSet = action.setBefore
+        isResting = false
+        isCompleted = false
+        showingCompletion = false
+        // For rep-based, return to pre-rest state (no active timer)
+        timeRemaining = 0
+        // Clear undo and hide toast
+        undoAction = nil
+        withAnimation { showUndoToast = false }
     }
     
     func formatTime(_ time: TimeInterval) -> String {
