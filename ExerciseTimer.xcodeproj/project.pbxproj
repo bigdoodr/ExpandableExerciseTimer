@@ -6,6 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CA94BC852F60751700C90CE6 /* ExpandableExerciseTimerWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		CA94BC8F2F60BE6B00C90CE6 /* ExerciseTimerWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA94BC722F6048C600C90CE6 /* ExerciseTimerWatchApp.swift */; };
+		CA94BC902F60BE7D00C90CE6 /* HealthKitWorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA94BC732F6048E200C90CE6 /* HealthKitWorkoutManager.swift */; };
+		CA94BC912F60BE8C00C90CE6 /* WatchWorkoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA94BC742F60490E00C90CE6 /* WatchWorkoutView.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		2D8564BA2EE4E04600DC78F6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,6 +28,13 @@
 			remoteGlobalIDString = 2D8564AB2EE4E04300DC78F6;
 			remoteInfo = ExerciseTimer;
 		};
+		CA94BC832F60751700C90CE6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2D8564A42EE4E04300DC78F6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CA94BC7A2F60751700C90CE6;
+			remoteInfo = "ExpandableExerciseTimerWatch Watch App";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -30,6 +44,7 @@
 			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
 			dstSubfolderSpec = 16;
 			files = (
+				CA94BC852F60751700C90CE6 /* ExpandableExerciseTimerWatch.app in Embed Watch Content */,
 			);
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -40,6 +55,12 @@
 		2D8564AC2EE4E04300DC78F6 /* ExerciseTimer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExerciseTimer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2D8564B92EE4E04600DC78F6 /* ExerciseTimerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExerciseTimerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2D8564C32EE4E04600DC78F6 /* ExerciseTimerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExerciseTimerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CA94BC722F6048C600C90CE6 /* ExerciseTimerWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExerciseTimerWatchApp.swift; sourceTree = "<group>"; };
+		CA94BC732F6048E200C90CE6 /* HealthKitWorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitWorkoutManager.swift; sourceTree = "<group>"; };
+		CA94BC742F60490E00C90CE6 /* WatchWorkoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWorkoutView.swift; sourceTree = "<group>"; };
+		CA94BC752F60491A00C90CE6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CA94BC762F60491E00C90CE6 /* ExerciseTimerWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ExerciseTimerWatch.entitlements; sourceTree = "<group>"; };
+		CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExpandableExerciseTimerWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -50,6 +71,15 @@
 			);
 			target = 2D8564AB2EE4E04300DC78F6 /* ExerciseTimer */;
 		};
+		CA94BC932F60BEA800C90CE6 /* Exceptions for "ExerciseTimer" folder in "ExpandableExerciseTimerWatch" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Shared/Exercise.swift,
+				Shared/WatchConnectivityManager.swift,
+				Shared/WorkoutState.swift,
+			);
+			target = CA94BC7A2F60751700C90CE6 /* ExpandableExerciseTimerWatch */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -57,6 +87,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				2DF9E26E2EF4EFAD00331F12 /* Exceptions for "ExerciseTimer" folder in "ExerciseTimer" target */,
+				CA94BC932F60BEA800C90CE6 /* Exceptions for "ExerciseTimer" folder in "ExpandableExerciseTimerWatch" target */,
 			);
 			path = ExerciseTimer;
 			sourceTree = "<group>";
@@ -95,6 +126,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CA94BC782F60751700C90CE6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -105,6 +143,7 @@
 				2D8564BC2EE4E04600DC78F6 /* ExerciseTimerTests */,
 				2D8564C62EE4E04600DC78F6 /* ExerciseTimerUITests */,
 				2D8564AD2EE4E04300DC78F6 /* Products */,
+				CA94BC712F6048C000C90CE6 /* ExerciseTimerWatch */,
 			);
 			sourceTree = "<group>";
 		};
@@ -114,8 +153,21 @@
 				2D8564AC2EE4E04300DC78F6 /* ExerciseTimer.app */,
 				2D8564B92EE4E04600DC78F6 /* ExerciseTimerTests.xctest */,
 				2D8564C32EE4E04600DC78F6 /* ExerciseTimerUITests.xctest */,
+				CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		CA94BC712F6048C000C90CE6 /* ExerciseTimerWatch */ = {
+			isa = PBXGroup;
+			children = (
+				CA94BC722F6048C600C90CE6 /* ExerciseTimerWatchApp.swift */,
+				CA94BC732F6048E200C90CE6 /* HealthKitWorkoutManager.swift */,
+				CA94BC742F60490E00C90CE6 /* WatchWorkoutView.swift */,
+				CA94BC752F60491A00C90CE6 /* Info.plist */,
+				CA94BC762F60491E00C90CE6 /* ExerciseTimerWatch.entitlements */,
+			);
+			path = ExerciseTimerWatch;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -133,6 +185,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				CA94BC842F60751700C90CE6 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				2D8564AE2EE4E04300DC78F6 /* ExerciseTimer */,
@@ -190,6 +243,25 @@
 			productReference = 2D8564C32EE4E04600DC78F6 /* ExerciseTimerUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		CA94BC7A2F60751700C90CE6 /* ExpandableExerciseTimerWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CA94BC862F60751700C90CE6 /* Build configuration list for PBXNativeTarget "ExpandableExerciseTimerWatch" */;
+			buildPhases = (
+				CA94BC772F60751700C90CE6 /* Sources */,
+				CA94BC782F60751700C90CE6 /* Frameworks */,
+				CA94BC792F60751700C90CE6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ExpandableExerciseTimerWatch;
+			packageProductDependencies = (
+			);
+			productName = "ExpandableExerciseTimerWatch Watch App";
+			productReference = CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -197,7 +269,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2620;
+				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					2D8564AB2EE4E04300DC78F6 = {
@@ -210,6 +282,9 @@
 					2D8564C22EE4E04600DC78F6 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = 2D8564AB2EE4E04300DC78F6;
+					};
+					CA94BC7A2F60751700C90CE6 = {
+						CreatedOnToolsVersion = 26.3;
 					};
 				};
 			};
@@ -230,6 +305,7 @@
 				2D8564AB2EE4E04300DC78F6 /* ExerciseTimer */,
 				2D8564B82EE4E04600DC78F6 /* ExerciseTimerTests */,
 				2D8564C22EE4E04600DC78F6 /* ExerciseTimerUITests */,
+				CA94BC7A2F60751700C90CE6 /* ExpandableExerciseTimerWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -250,6 +326,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		2D8564C12EE4E04600DC78F6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CA94BC792F60751700C90CE6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -280,6 +363,16 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CA94BC772F60751700C90CE6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CA94BC912F60BE8C00C90CE6 /* WatchWorkoutView.swift in Sources */,
+				CA94BC902F60BE7D00C90CE6 /* HealthKitWorkoutManager.swift in Sources */,
+				CA94BC8F2F60BE6B00C90CE6 /* ExerciseTimerWatchApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -292,6 +385,11 @@
 			isa = PBXTargetDependency;
 			target = 2D8564AB2EE4E04300DC78F6 /* ExerciseTimer */;
 			targetProxy = 2D8564C42EE4E04600DC78F6 /* PBXContainerItemProxy */;
+		};
+		CA94BC842F60751700C90CE6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CA94BC7A2F60751700C90CE6 /* ExpandableExerciseTimerWatch */;
+			targetProxy = CA94BC832F60751700C90CE6 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -628,6 +726,73 @@
 			};
 			name = Release;
 		};
+		CA94BC872F60751700C90CE6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C7ZFPH2CB5;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = rocks.scruggsfam.productions.ExpandableExerciseTimer;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = rocks.scruggsfam.productions.ExpandableExerciseTimer.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.2;
+			};
+			name = Debug;
+		};
+		CA94BC882F60751700C90CE6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C7ZFPH2CB5;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = rocks.scruggsfam.productions.ExpandableExerciseTimer;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = rocks.scruggsfam.productions.ExpandableExerciseTimer.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.2;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -663,6 +828,15 @@
 			buildConfigurations = (
 				2D8564D42EE4E04600DC78F6 /* Debug */,
 				2D8564D52EE4E04600DC78F6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CA94BC862F60751700C90CE6 /* Build configuration list for PBXNativeTarget "ExpandableExerciseTimerWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CA94BC872F60751700C90CE6 /* Debug */,
+				CA94BC882F60751700C90CE6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -23,15 +23,6 @@ struct ExerciseTimerApp: App {
     }
 }
 
-struct Exercise: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var name: String = ""
-    var isTimeBased: Bool = true
-    var sets: Int = 1
-    var exerciseDuration: TimeInterval = 30
-    var restDuration: TimeInterval = 10
-}
-
 struct ExerciseListView: View {
     @State private var exercises: [Exercise] = [Exercise()]
     @State private var isWorkoutActive = false
@@ -41,6 +32,8 @@ struct ExerciseListView: View {
 #if os(iOS)
     @State private var keepScreenAwake = false
     @State private var enableBackgroundAudio = false
+    @State private var enableHealthKitTracking = false
+    @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
 #endif
     @State private var showingResetConfirm = false
     
@@ -50,7 +43,7 @@ struct ExerciseListView: View {
         NavigationStack {
 #if os(iOS)
             if isWorkoutActive {
-                WorkoutView(exercises: exercises, isActive: $isWorkoutActive, keepScreenAwake: $keepScreenAwake, enableBackgroundAudio: $enableBackgroundAudio)
+                WorkoutView(exercises: exercises, isActive: $isWorkoutActive, keepScreenAwake: $keepScreenAwake, enableBackgroundAudio: $enableBackgroundAudio, healthKitEnabled: enableHealthKitTracking, activityType: selectedActivityType)
             } else {
                 builderView
             }
@@ -71,6 +64,7 @@ struct ExerciseListView: View {
 #if os(iOS)
             keepAwakeSection
             backgroundAudioSection
+            healthKitSection
 #endif
             resetSection
             startSection
@@ -176,6 +170,27 @@ struct ExerciseListView: View {
             .toggleStyle(.switch)
         }
     }
+    
+    @ViewBuilder
+    private var healthKitSection: some View {
+        Section(footer: Text("When enabled, workouts are recorded to Apple Health via Apple Watch. Requires a paired Apple Watch. Disable this for non-exercise timers.")) {
+            Toggle(isOn: $enableHealthKitTracking) {
+                HStack {
+                    Image(systemName: enableHealthKitTracking ? "heart.fill" : "heart")
+                    Text("HealthKit Tracking")
+                }
+            }
+            .toggleStyle(.switch)
+            
+            if enableHealthKitTracking {
+                Picker("Activity Type", selection: $selectedActivityType) {
+                    ForEach(WorkoutActivityOption.allCases) { option in
+                        Text(option.rawValue).tag(option)
+                    }
+                }
+            }
+        }
+    }
 #endif
     
     @ViewBuilder
@@ -191,7 +206,17 @@ struct ExerciseListView: View {
     @ViewBuilder
     private var startSection: some View {
         Section {
-            Button(action: { isWorkoutActive = true }) {
+            Button(action: {
+#if os(iOS)
+                let command = WorkoutCommand.start(
+                    exercises: exercises,
+                    healthKitEnabled: enableHealthKitTracking,
+                    activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+                )
+                WatchConnectivityManager.shared.sendWorkoutCommand(command)
+#endif
+                isWorkoutActive = true
+            }) {
                 HStack {
                     Image(systemName: "play.fill")
                     Text("Start Workout")
@@ -249,6 +274,13 @@ struct ExerciseListView: View {
         if let data = try? JSONEncoder().encode(exercises) {
             UserDefaults.standard.set(data, forKey: exercisesDefaultsKey)
         }
+#if os(iOS)
+        WatchConnectivityManager.shared.updateContext(
+            exercises: exercises,
+            healthKitEnabled: enableHealthKitTracking,
+            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+        )
+#endif
     }
 }
 
@@ -490,6 +522,8 @@ struct WorkoutView: View {
 #if os(iOS)
     @Binding var keepScreenAwake: Bool
     @Binding var enableBackgroundAudio: Bool
+    var healthKitEnabled: Bool
+    var activityType: WorkoutActivityOption
 #endif
     
     @State private var currentExerciseIndex = 0
@@ -525,6 +559,56 @@ struct WorkoutView: View {
         return idx + 1
     }
     var totalExercises: Int { exercises.count }
+    
+    var upNextText: String {
+        guard !isCompleted else { return "" }
+        
+        if isResting {
+            // Currently resting. After rest: currentSet increments.
+            let nextSet = currentSet + 1
+            if nextSet <= currentExercise.sets {
+                // More sets of the same exercise
+                let name = currentExercise.name.isEmpty ? "Exercise \(displayExerciseNumber)" : currentExercise.name
+                if currentExercise.isTimeBased {
+                    return "Up Next: \(name) – Set \(nextSet)"
+                } else {
+                    return "Up Next: \(name) – Set \(nextSet) (Reps)"
+                }
+            } else {
+                // All sets done after this rest; move to next exercise
+                let nextIndex = currentExerciseIndex + 1
+                if nextIndex >= exercises.count {
+                    return "Up Next: Workout Complete"
+                } else {
+                    let next = exercises[nextIndex]
+                    return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
+                }
+            }
+        } else {
+            // Currently exercising (time-based or rep-based)
+            if currentSet < currentExercise.sets {
+                // More sets remain – rest comes next
+                if currentExercise.restDuration > 0 {
+                    return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
+                } else {
+                    return "Up Next: Set \(currentSet + 1)"
+                }
+            } else {
+                // Last set of current exercise
+                if currentExercise.restDuration > 0 {
+                    return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
+                } else {
+                    let nextIndex = currentExerciseIndex + 1
+                    if nextIndex >= exercises.count {
+                        return "Up Next: Workout Complete"
+                    } else {
+                        let next = exercises[nextIndex]
+                        return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
+                    }
+                }
+            }
+        }
+    }
     
     var body: some View {
         ScrollView {
@@ -594,6 +678,15 @@ struct WorkoutView: View {
                     }
                     .padding()
                 }
+                
+                // "Up Next" line
+                if !upNextText.isEmpty {
+                    Text(upNextText)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+                }
+                
 #if os(iOS)
                 // Two-row layout in compact width: first row Pause/Cancel, second row Awake and Background Audio
                 Group {
@@ -720,6 +813,20 @@ struct WorkoutView: View {
         }
     }
     
+#if os(iOS)
+    private func sendStateToWatch() {
+        let command = WorkoutCommand.updatePhase(
+            exerciseIndex: currentExerciseIndex,
+            set: currentSet,
+            isResting: isResting,
+            isPaused: isPaused,
+            phaseEndDate: (currentExercise.isTimeBased || isResting) ? phaseEndDate : nil,
+            isCompleted: isCompleted
+        )
+        WatchConnectivityManager.shared.sendWorkoutCommand(command)
+    }
+#endif
+    
     private func beginExit() {
         // Freeze UI and dismiss any modals
         isExiting = true
@@ -731,6 +838,7 @@ struct WorkoutView: View {
         cancelPhaseEndNotification()
 #if os(iOS)
         stopBackgroundAudioLoop()
+        WatchConnectivityManager.shared.sendWorkoutCommand(.stop)
 #endif
         if audioEngine.isRunning { audioEngine.stop() }
 #if os(iOS)
@@ -757,6 +865,9 @@ struct WorkoutView: View {
         phaseEndDate = Date().addingTimeInterval(duration)
         timeRemaining = max(0, duration)
         schedulePhaseEndNotification(in: duration)
+#if os(iOS)
+        sendStateToWatch()
+#endif
     }
     
     func timerExpired() {
@@ -777,6 +888,9 @@ struct WorkoutView: View {
                     isCompleted = true
                     timeRemaining = 0
                     showingCompletion = true
+#if os(iOS)
+                    sendStateToWatch()
+#endif
                     return
                 }
                 // Start next exercise phase
@@ -784,6 +898,9 @@ struct WorkoutView: View {
                     startCurrentPhase()
                 } else {
                     timeRemaining = 0
+#if os(iOS)
+                    sendStateToWatch()
+#endif
                 }
             } else {
                 // Start the next set's exercise for the SAME exercise
@@ -809,6 +926,9 @@ struct WorkoutView: View {
                         isCompleted = true
                         timeRemaining = 0
                         showingCompletion = true
+#if os(iOS)
+                        sendStateToWatch()
+#endif
                         return
                     }
                     // Start next exercise phase (exercise or rep-based)
@@ -818,6 +938,9 @@ struct WorkoutView: View {
                     } else {
                         isResting = false
                         timeRemaining = 0
+#if os(iOS)
+                        sendStateToWatch()
+#endif
                     }
                 }
             }
@@ -902,6 +1025,9 @@ struct WorkoutView: View {
             return true
         }()
         advanceWorkout()
+#if os(iOS)
+        sendStateToWatch()
+#endif
         undoAction = WorkoutUndoAction(exerciseIndex: prevExerciseIndex, setBefore: prevSet, wasResting: prevWasResting, advancedExercise: willAdvanceExercise)
         withAnimation { showUndoToast = true }
         // Auto-hide after 4 seconds
@@ -973,7 +1099,12 @@ struct WorkoutView: View {
 #endif
 
     private var pauseResumeButton: some View {
-        Button(action: { isPaused.toggle() }) {
+        Button(action: {
+            isPaused.toggle()
+#if os(iOS)
+            WatchConnectivityManager.shared.sendWorkoutCommand(isPaused ? .pause : .resume)
+#endif
+        }) {
             HStack {
                 Image(systemName: isPaused ? "play.fill" : "pause.fill")
                 Text(isPaused ? "Resume" : "Pause")
