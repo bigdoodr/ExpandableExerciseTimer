@@ -1,7 +1,7 @@
 import Foundation
 
 /// Commands sent from iOS to watchOS to control workout display
-enum WorkoutCommand: Codable {
+enum WorkoutCommand: Codable, Equatable {
     case start(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?)
     case updatePhase(exerciseIndex: Int, set: Int, isResting: Bool, isPaused: Bool,
                      phaseEndDate: Date?, isCompleted: Bool)

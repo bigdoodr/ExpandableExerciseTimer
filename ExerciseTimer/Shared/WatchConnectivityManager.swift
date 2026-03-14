@@ -2,9 +2,11 @@ import Foundation
 
 #if os(iOS) || os(watchOS)
 import WatchConnectivity
+internal import Combine
 
 @MainActor
 final class WatchConnectivityManager: NSObject, ObservableObject {
+
     static let shared = WatchConnectivityManager()
     
     @Published var receivedExercises: [Exercise] = []

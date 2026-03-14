@@ -1,5 +1,6 @@
 import SwiftUI
 import HealthKit
+internal import Combine
 
 struct WatchWorkoutView: View {
     @EnvironmentObject var connectivity: WatchConnectivityManager

@@ -66,7 +66,6 @@ struct ExerciseListView: View {
             backgroundAudioSection
             healthKitSection
 #endif
-            resetSection
             startSection
         }
 #if os(iOS)
@@ -193,15 +192,6 @@ struct ExerciseListView: View {
     }
 #endif
     
-    @ViewBuilder
-    private var resetSection: some View {
-        Section {
-            Button(action: { showingResetConfirm = true }) {
-                Image(systemName: "arrow.counterclockwise")
-            }
-            .accessibilityLabel("Reset")
-        }
-    }
     
     @ViewBuilder
     private var startSection: some View {
@@ -1284,3 +1274,6 @@ struct ExerciseDocument: FileDocument {
     }
 }
 
+#Preview {
+    ExerciseListView()
+}

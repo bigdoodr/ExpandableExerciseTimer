@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+internal import Combine
 
 @MainActor
 final class HealthKitWorkoutManager: NSObject, ObservableObject {
