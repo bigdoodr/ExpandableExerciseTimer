@@ -31,7 +31,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         }
     }
     
-    func startWorkoutSession(with configuration: HKWorkoutConfiguration) {
+    func startWorkoutSession(with configuration: HKWorkoutConfiguration) async {
         guard workoutSession == nil else { return }
         do {
             workoutSession = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
@@ -45,13 +45,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             
             let startDate = Date()
             workoutSession?.startActivity(with: startDate)
-            Task {
-                do {
-                    try await workoutBuilder?.beginCollection(at: startDate)
-                } catch {
-                    print("Failed to begin collection: \(error)")
-                }
-            }
+            try await workoutBuilder?.beginCollection(at: startDate)
             isWorkoutActive = true
         } catch {
             print("Failed to start workout session: \(error)")

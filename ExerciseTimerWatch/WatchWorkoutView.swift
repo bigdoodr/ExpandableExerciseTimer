@@ -233,7 +233,7 @@ struct WatchWorkoutView: View {
                 Task {
                     await healthKit.requestAuthorization()
                     let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
-                    healthKit.startWorkoutSession(with: config)
+                    await healthKit.startWorkoutSession(with: config)
                 }
             }
             

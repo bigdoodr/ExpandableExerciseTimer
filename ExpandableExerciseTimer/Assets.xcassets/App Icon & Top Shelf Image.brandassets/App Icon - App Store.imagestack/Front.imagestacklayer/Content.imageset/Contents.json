@@ -1,9 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "Master_Padded_1024.png",
-      "idiom" : "vision",
-      "scale" : "2x"
+      "idiom" : "tv"
     }
   ],
   "info" : {

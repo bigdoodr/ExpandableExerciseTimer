@@ -21,7 +21,7 @@ struct ExerciseTimerWatchApp: App {
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     func handle(_ workoutConfiguration: HKWorkoutConfiguration) {
         Task { @MainActor in
-            HealthKitWorkoutManager.shared.startWorkoutSession(with: workoutConfiguration)
+            await HealthKitWorkoutManager.shared.startWorkoutSession(with: workoutConfiguration)
         }
     }
 }
