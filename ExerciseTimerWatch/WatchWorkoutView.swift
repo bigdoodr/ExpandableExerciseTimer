@@ -5,28 +5,20 @@ internal import Combine
 struct WatchWorkoutView: View {
     @EnvironmentObject var connectivity: WatchConnectivityManager
     @EnvironmentObject var healthKit: HealthKitWorkoutManager
-    
-    @State private var isWorkoutRunning = false
-    @State private var exercises: [Exercise] = []
-    @State private var currentExerciseIndex = 0
-    @State private var currentSet = 1
-    @State private var isResting = false
-    @State private var isPaused = false
-    @State private var isCompleted = false
-    @State private var phaseEndDate: Date?
-    @State private var timeRemaining: TimeInterval = 0
-    @State private var healthKitEnabled = false
-    @State private var activityTypeName: String?
+    @StateObject private var engine = WatchWorkoutEngine()
+    @Environment(\.scenePhase) private var scenePhase
     
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     
     var body: some View {
-        if isWorkoutRunning && !exercises.isEmpty {
+        if engine.isWorkoutRunning && !engine.exercises.isEmpty {
             activeWorkoutView
         } else {
             waitingView
         }
     }
+    
+    // MARK: - Waiting View
     
     private var waitingView: some View {
         VStack(spacing: 12) {
@@ -35,15 +27,38 @@ struct WatchWorkoutView: View {
                 .foregroundStyle(.green)
             Text("Exercise Timer")
                 .font(.headline)
-            Text("Start a workout\non your iPhone")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            
+            if !connectivity.receivedExercises.isEmpty {
+                Button(action: startLocalWorkout) {
+                    HStack {
+                        Image(systemName: "play.fill")
+                        Text("Start Workout")
+                    }
+                    .font(.headline)
+                    .foregroundStyle(.green)
+                }
+                
+                Text("\(connectivity.receivedExercises.count) exercise(s) ready")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Start a workout\non your iPhone")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .onChange(of: connectivity.receivedCommand) { _, command in
             handleCommand(command)
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active, let cmd = connectivity.receivedCommand {
+                handleCommand(cmd)
+            }
+        }
     }
+    
+    // MARK: - Active Workout View
     
     private var activeWorkoutView: some View {
         ScrollView {
@@ -53,32 +68,32 @@ struct WatchWorkoutView: View {
                     .font(.headline)
                     .lineLimit(2)
                 
-                Text("Set \(currentSet) of \(currentExercise?.sets ?? 1)")
+                Text("Set \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
                 // Phase indicator + timer
-                if isCompleted {
+                if engine.isCompleted {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.largeTitle)
                         .foregroundStyle(.green)
                     Text("Complete!")
                         .font(.title3)
                         .bold()
-                } else if isResting {
+                } else if engine.isResting {
                     Text("REST")
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.orange)
-                    Text(formatTime(timeRemaining))
+                    Text(engine.formatTime(engine.timeRemaining))
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                } else if currentExercise?.isTimeBased == true {
+                } else if engine.currentExercise?.isTimeBased == true {
                     Text("EXERCISE")
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.green)
-                    Text(formatTime(timeRemaining))
+                    Text(engine.formatTime(engine.timeRemaining))
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
                 } else {
@@ -86,12 +101,27 @@ struct WatchWorkoutView: View {
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.blue)
-                    Text("Complete reps")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    
+                    if engine.source == .local {
+                        Button(action: {
+                            engine.repsComplete()
+                        }) {
+                            Text("Reps Complete")
+                                .font(.caption)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Color.blue)
+                                .cornerRadius(8)
+                        }
+                    } else {
+                        Text("Complete reps")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 
-                if isPaused && !isCompleted {
+                if engine.isPaused && !engine.isCompleted {
                     Text("PAUSED")
                         .font(.caption)
                         .foregroundStyle(.yellow)
@@ -99,8 +129,8 @@ struct WatchWorkoutView: View {
                 }
                 
                 // Up Next
-                if !isCompleted {
-                    Text(upNextText)
+                if !engine.isCompleted {
+                    Text(engine.upNextText)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -109,106 +139,137 @@ struct WatchWorkoutView: View {
                 }
                 
                 // HealthKit metrics
-                if healthKit.isWorkoutActive {
+                if healthKit.isWorkoutActive || engine.healthKitEnabled {
                     Divider()
                         .padding(.vertical, 4)
-                    HStack(spacing: 16) {
-                        VStack(spacing: 2) {
-                            Image(systemName: "heart.fill")
-                                .foregroundStyle(.red)
-                                .font(.caption)
-                            Text("\(Int(healthKit.heartRate))")
-                                .font(.caption)
-                                .bold()
-                            Text("BPM")
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
+                    
+                    if healthKit.isWorkoutActive {
+                        HStack(spacing: 16) {
+                            VStack(spacing: 2) {
+                                Image(systemName: "heart.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption)
+                                if healthKit.heartRate > 0 {
+                                    Text("\(Int(healthKit.heartRate))")
+                                        .font(.caption)
+                                        .bold()
+                                } else {
+                                    Text("--")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("BPM")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(.secondary)
+                            }
+                            VStack(spacing: 2) {
+                                Image(systemName: "flame.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.caption)
+                                if healthKit.activeCalories > 0 {
+                                    Text("\(Int(healthKit.activeCalories))")
+                                        .font(.caption)
+                                        .bold()
+                                } else {
+                                    Text("--")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("CAL")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        VStack(spacing: 2) {
-                            Image(systemName: "flame.fill")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                            Text("\(Int(healthKit.activeCalories))")
-                                .font(.caption)
-                                .bold()
-                            Text("CAL")
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
+                    } else {
+                        Text("Starting fitness tracking...")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                
+                // Workout controls
+                if !engine.isCompleted {
+                    Divider()
+                        .padding(.vertical, 4)
+                    
+                    // Pause/Resume (local mode only)
+                    if engine.source == .local {
+                        Button(action: {
+                            engine.togglePause()
+                            if healthKit.isWorkoutActive {
+                                if engine.isPaused {
+                                    healthKit.pauseWorkout()
+                                } else {
+                                    healthKit.resumeWorkout()
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
+                                Text(engine.isPaused ? "Resume" : "Pause")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                         }
+                    }
+                    
+                    // End workout (always available)
+                    Button(action: endWorkout) {
+                        HStack {
+                            Image(systemName: "stop.fill")
+                            Text("End Workout")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.red)
                     }
                 }
             }
             .padding()
         }
         .onReceive(timer) { _ in
-            guard !isPaused, !isCompleted, let endDate = phaseEndDate else { return }
-            timeRemaining = max(0, endDate.timeIntervalSinceNow)
+            engine.tickTimer()
         }
         .onChange(of: connectivity.receivedCommand) { _, command in
             handleCommand(command)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                engine.recalculateOnWake()
+            }
         }
     }
     
     // MARK: - Computed Properties
     
-    private var currentExercise: Exercise? {
-        guard !exercises.isEmpty else { return nil }
-        let safeIndex = min(max(0, currentExerciseIndex), exercises.count - 1)
-        return exercises[safeIndex]
-    }
-    
     private var currentExerciseName: String {
-        guard let exercise = currentExercise else { return "Exercise" }
-        let displayIndex = min(max(0, currentExerciseIndex), exercises.count - 1) + 1
-        return exercise.name.isEmpty ? "Exercise \(displayIndex)" : exercise.name
+        guard let exercise = engine.currentExercise else { return "Exercise" }
+        return exercise.name.isEmpty ? "Exercise \(engine.displayExerciseNumber)" : exercise.name
     }
     
-    private var displayExerciseNumber: Int {
-        guard !exercises.isEmpty else { return 0 }
-        return min(max(0, currentExerciseIndex), exercises.count - 1) + 1
-    }
+    // MARK: - Actions
     
-    private var upNextText: String {
-        guard !isCompleted, let exercise = currentExercise else { return "" }
+    private func startLocalWorkout() {
+        let exercises = connectivity.receivedExercises
+        let hkEnabled = connectivity.receivedHealthKitEnabled
+        let actType = connectivity.receivedActivityType
         
-        if isResting {
-            let nextSet = currentSet + 1
-            if nextSet <= exercise.sets {
-                let name = exercise.name.isEmpty ? "Exercise \(displayExerciseNumber)" : exercise.name
-                if exercise.isTimeBased {
-                    return "Up Next: \(name) – Set \(nextSet)"
-                } else {
-                    return "Up Next: \(name) – Set \(nextSet) (Reps)"
-                }
-            } else {
-                let nextIndex = currentExerciseIndex + 1
-                if nextIndex >= exercises.count {
-                    return "Up Next: Workout Complete"
-                } else {
-                    let next = exercises[nextIndex]
-                    return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
-                }
+        engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
+        
+        if hkEnabled {
+            Task {
+                await healthKit.requestAuthorization()
+                let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
+                await healthKit.startWorkoutSession(with: config)
             }
-        } else {
-            if currentSet < exercise.sets {
-                if exercise.restDuration > 0 {
-                    return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-                } else {
-                    return "Up Next: Set \(currentSet + 1)"
-                }
-            } else {
-                if exercise.restDuration > 0 {
-                    return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-                } else {
-                    let nextIndex = currentExerciseIndex + 1
-                    if nextIndex >= exercises.count {
-                        return "Up Next: Workout Complete"
-                    } else {
-                        let next = exercises[nextIndex]
-                        return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
-                    }
-                }
-            }
+        }
+    }
+    
+    private func endWorkout() {
+        engine.stopWorkout()
+        Task {
+            await healthKit.endWorkout()
         }
     }
     
@@ -219,15 +280,7 @@ struct WatchWorkoutView: View {
         
         switch command {
         case .start(let exerciseList, let hkEnabled, let actType):
-            exercises = exerciseList
-            currentExerciseIndex = 0
-            currentSet = 1
-            isResting = false
-            isPaused = false
-            isCompleted = false
-            isWorkoutRunning = true
-            healthKitEnabled = hkEnabled
-            activityTypeName = actType
+            engine.applyRemoteStart(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
             
             if hkEnabled {
                 Task {
@@ -238,60 +291,33 @@ struct WatchWorkoutView: View {
             }
             
         case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
-            currentExerciseIndex = exerciseIndex
-            currentSet = set
-            isResting = resting
-            isPaused = paused
-            phaseEndDate = endDate
-            isCompleted = completed
-            
-            if let endDate {
-                timeRemaining = max(0, endDate.timeIntervalSinceNow)
-            }
-            
+            engine.applyRemoteUpdate(
+                exerciseIndex: exerciseIndex, set: set, isResting: resting,
+                isPaused: paused, phaseEndDate: endDate, isCompleted: completed
+            )
             if completed {
                 Task {
                     await healthKit.endWorkout()
-                    // Keep showing completion for a moment, then return to waiting
                     try? await Task.sleep(for: .seconds(5))
-                    isWorkoutRunning = false
+                    engine.isWorkoutRunning = false
                 }
             }
             
         case .pause:
-            isPaused = true
+            engine.isPaused = true
             if healthKit.isWorkoutActive {
                 healthKit.pauseWorkout()
             }
             
         case .resume:
-            isPaused = false
+            engine.isPaused = false
             if healthKit.isWorkoutActive {
                 healthKit.resumeWorkout()
             }
             
         case .stop:
-            isPaused = true
-            isCompleted = true
-            Task {
-                await healthKit.endWorkout()
-                isWorkoutRunning = false
-            }
-        }
-    }
-    
-    // MARK: - Helpers
-    
-    private func formatTime(_ time: TimeInterval) -> String {
-        let totalSeconds = Int(time)
-        let hours = totalSeconds / 3600
-        let minutes = (totalSeconds % 3600) / 60
-        let seconds = totalSeconds % 60
-        
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%d:%02d", minutes, seconds)
+            engine.stopWorkout()
+            Task { await healthKit.endWorkout() }
         }
     }
 }
