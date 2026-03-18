@@ -32,7 +32,10 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     }
     
     func startWorkoutSession(with configuration: HKWorkoutConfiguration) async {
-        guard workoutSession == nil else { return }
+        // Force-clean any stale session from a previous workout
+        if workoutSession != nil {
+            await endWorkout()
+        }
         do {
             workoutSession = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
             workoutBuilder = workoutSession?.associatedWorkoutBuilder()
@@ -61,19 +64,26 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     }
     
     func endWorkout() async {
-        guard let session = workoutSession, let builder = workoutBuilder else { return }
-        session.end()
-        do {
-            try await builder.endCollection(at: Date())
-            try await builder.finishWorkout()
-        } catch {
-            print("Failed to end workout: \(error)")
-        }
+        let session = workoutSession
+        let builder = workoutBuilder
+        
+        // Clear references first to prevent stale state
         workoutSession = nil
         workoutBuilder = nil
         isWorkoutActive = false
         heartRate = 0
         activeCalories = 0
+        
+        // Then attempt graceful shutdown
+        session?.end()
+        if let builder {
+            do {
+                try await builder.endCollection(at: Date())
+                try await builder.finishWorkout()
+            } catch {
+                print("Failed to end workout: \(error)")
+            }
+        }
     }
     
     static func workoutConfiguration(for activityTypeName: String?) -> HKWorkoutConfiguration {
@@ -105,23 +115,6 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         }
     }
     
-    private func updateHeartRate(from statistics: HKStatistics?) {
-        guard let statistics else { return }
-        guard let quantity = statistics.mostRecentQuantity() else { return }
-        let bpm = quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
-        Task { @MainActor in
-            self.heartRate = bpm
-        }
-    }
-    
-    private func updateActiveCalories(from statistics: HKStatistics?) {
-        guard let statistics else { return }
-        guard let quantity = statistics.sumQuantity() else { return }
-        let cal = quantity.doubleValue(for: .kilocalorie())
-        Task { @MainActor in
-            self.activeCalories = cal
-        }
-    }
 }
 
 extension HealthKitWorkoutManager: HKWorkoutSessionDelegate {
@@ -129,7 +122,18 @@ extension HealthKitWorkoutManager: HKWorkoutSessionDelegate {
                                      didChangeTo toState: HKWorkoutSessionState,
                                      from fromState: HKWorkoutSessionState,
                                      date: Date) {
-        // State changes handled via commands from iOS
+        Task { @MainActor in
+            switch toState {
+            case .running:
+                self.isWorkoutActive = true
+            case .ended:
+                if self.isWorkoutActive {
+                    self.isWorkoutActive = false
+                }
+            default:
+                break
+            }
+        }
     }
     
     nonisolated func workoutSession(_ workoutSession: HKWorkoutSession,
@@ -152,9 +156,13 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
             Task { @MainActor in
                 switch quantityType {
                 case HKQuantityType.quantityType(forIdentifier: .heartRate):
-                    self.updateHeartRate(from: statistics)
+                    if let statistics, let quantity = statistics.mostRecentQuantity() {
+                        self.heartRate = quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+                    }
                 case HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned):
-                    self.updateActiveCalories(from: statistics)
+                    if let statistics, let quantity = statistics.sumQuantity() {
+                        self.activeCalories = quantity.doubleValue(for: .kilocalorie())
+                    }
                 default:
                     break
                 }

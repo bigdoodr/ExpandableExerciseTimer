@@ -525,6 +525,7 @@ struct WorkoutView: View {
     @State private var showingCompletion = false
     @State private var isCompleted = false
     @State private var isExiting = false
+    @State private var pausedTimeRemaining: TimeInterval? = nil
     
     @State private var undoAction: WorkoutUndoAction? = nil
     @State private var showUndoToast = false
@@ -748,7 +749,7 @@ struct WorkoutView: View {
             Text("Great job! You've completed all exercises.")
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            if newPhase == .active && !isPaused {
                 let remaining = phaseEndDate.timeIntervalSinceNow
                 if (currentExercise.isTimeBased || isResting) && remaining <= 0 {
                     timerExpired()
@@ -842,6 +843,7 @@ struct WorkoutView: View {
     
     func startCurrentPhase() {
         if isCompleted { return }
+        pausedTimeRemaining = nil
         var duration: TimeInterval = 0
         if isResting {
             duration = currentExercise.restDuration
@@ -1090,9 +1092,26 @@ struct WorkoutView: View {
 
     private var pauseResumeButton: some View {
         Button(action: {
-            isPaused.toggle()
+            if isPaused {
+                // RESUMING: recalculate phaseEndDate from stored remaining time
+                if let remaining = pausedTimeRemaining {
+                    phaseEndDate = Date().addingTimeInterval(remaining)
+                    timeRemaining = remaining
+                    pausedTimeRemaining = nil
+                    schedulePhaseEndNotification(in: remaining)
+                }
+                isPaused = false
+            } else {
+                // PAUSING: capture current remaining time
+                let remaining = max(0, phaseEndDate.timeIntervalSince(Date()))
+                pausedTimeRemaining = remaining
+                timeRemaining = remaining
+                isPaused = true
+                cancelPhaseEndNotification()
+            }
 #if os(iOS)
             WatchConnectivityManager.shared.sendWorkoutCommand(isPaused ? .pause : .resume)
+            sendStateToWatch()
 #endif
         }) {
             HStack {

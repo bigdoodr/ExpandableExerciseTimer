@@ -12,6 +12,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var receivedExercises: [Exercise] = []
     @Published var receivedCommand: WorkoutCommand?
     @Published var isWatchReachable = false
+    @Published var receivedHealthKitEnabled = false
+    @Published var receivedActivityType: String?
     
     private var session: WCSession?
     
@@ -65,9 +67,23 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
             }
         }
         
+        // Extract HealthKit settings from context
+        if let hkEnabled = message[WCContextKey.healthKitEnabled] as? Bool {
+            Task { @MainActor in
+                self.receivedHealthKitEnabled = hkEnabled
+            }
+        }
+        if let actType = message[WCContextKey.activityType] as? String {
+            Task { @MainActor in
+                self.receivedActivityType = actType
+            }
+        }
+        
         if let commandData = message[WCContextKey.workoutCommand] as? Data,
            let command = try? JSONDecoder().decode(WorkoutCommand.self, from: commandData) {
             Task { @MainActor in
+                // Reset first so onChange always fires, even for duplicate commands
+                self.receivedCommand = nil
                 self.receivedCommand = command
                 // Also extract exercises from start command
                 if case .start(let exercises, _, _) = command {

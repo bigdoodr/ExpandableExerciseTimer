@@ -1,5 +1,6 @@
 import Foundation
 import WatchKit
+internal import Combine
 
 /// Encapsulates the workout timer logic for the watch.
 /// Supports two modes:
