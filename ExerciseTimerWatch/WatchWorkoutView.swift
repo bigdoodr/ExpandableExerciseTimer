@@ -182,6 +182,17 @@ struct WatchWorkoutView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    } else if let error = healthKit.startError {
+                        VStack(spacing: 4) {
+                            Text("Tracking unavailable")
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                            Text(error)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                        }
                     } else {
                         Text("Starting fitness tracking...")
                             .font(.caption2)

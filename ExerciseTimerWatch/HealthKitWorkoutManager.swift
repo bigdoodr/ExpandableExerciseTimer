@@ -11,13 +11,12 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var isWorkoutActive = false
     @Published var heartRate: Double = 0
     @Published var activeCalories: Double = 0
-    @Published var authorizationRequested = false
+    @Published var startError: String?
     
     private var workoutSession: HKWorkoutSession?
     private var workoutBuilder: HKLiveWorkoutBuilder?
     
     func requestAuthorization() async {
-        guard !authorizationRequested else { return }
         let typesToShare: Set<HKSampleType> = [HKObjectType.workoutType()]
         let typesToRead: Set<HKObjectType> = [
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
@@ -25,33 +24,52 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         ]
         do {
             try await healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead)
-            authorizationRequested = true
         } catch {
             print("HealthKit authorization failed: \(error)")
         }
     }
     
     func startWorkoutSession(with configuration: HKWorkoutConfiguration) async {
+        startError = nil
+        
         // Force-clean any stale session from a previous workout
         if workoutSession != nil {
-            await endWorkout()
+            let session = workoutSession
+            let builder = workoutBuilder
+            workoutSession = nil
+            workoutBuilder = nil
+            isWorkoutActive = false
+            session?.end()
+            if let builder {
+                try? await builder.endCollection(at: Date())
+                try? await builder.finishWorkout()
+            }
         }
+        
         do {
-            workoutSession = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
-            workoutBuilder = workoutSession?.associatedWorkoutBuilder()
-            workoutBuilder?.dataSource = HKLiveWorkoutDataSource(
+            let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
+            let builder = session.associatedWorkoutBuilder()
+            builder.dataSource = HKLiveWorkoutDataSource(
                 healthStore: healthStore,
                 workoutConfiguration: configuration
             )
-            workoutSession?.delegate = self
-            workoutBuilder?.delegate = self
+            session.delegate = self
+            builder.delegate = self
+            
+            self.workoutSession = session
+            self.workoutBuilder = builder
             
             let startDate = Date()
-            workoutSession?.startActivity(with: startDate)
-            try await workoutBuilder?.beginCollection(at: startDate)
+            session.startActivity(with: startDate)
+            try await builder.beginCollection(at: startDate)
             isWorkoutActive = true
         } catch {
             print("Failed to start workout session: \(error)")
+            startError = error.localizedDescription
+            // Clean up on failure
+            workoutSession?.end()
+            workoutSession = nil
+            workoutBuilder = nil
         }
     }
     
