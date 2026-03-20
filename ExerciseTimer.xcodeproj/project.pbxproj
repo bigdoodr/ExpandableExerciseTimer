@@ -66,6 +66,7 @@
 		CA94BCA22F657BB800C90CE6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CA94BCA42F65930000C90CE6 /* ExpandableExerciseTimerWatch-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "ExpandableExerciseTimerWatch-Info.plist"; sourceTree = "<group>"; };
 		CA94BCA92F659B3500C90CE6 /* ExpandableExerciseTimer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExpandableExerciseTimer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CACA557D2F6D6869007F017F /* ExpandableExerciseTimerWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ExpandableExerciseTimerWatch.entitlements; sourceTree = "<group>"; };
 		CAD94DCB2F6AECA400388A6B /* WatchWorkoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWorkoutEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -152,6 +153,7 @@
 		2D8564A32EE4E04300DC78F6 = {
 			isa = PBXGroup;
 			children = (
+				CACA557D2F6D6869007F017F /* ExpandableExerciseTimerWatch.entitlements */,
 				CA94BCA42F65930000C90CE6 /* ExpandableExerciseTimerWatch-Info.plist */,
 				2D8564AE2EE4E04300DC78F6 /* ExerciseTimer */,
 				2D8564BC2EE4E04600DC78F6 /* ExerciseTimerTests */,
@@ -580,8 +582,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ExerciseTimer/ExerciseTimer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_APP_SANDBOX = YES;
@@ -601,6 +604,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "saves your workout data to Health";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -638,8 +642,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ExerciseTimer/ExerciseTimer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_APP_SANDBOX = YES;
@@ -659,6 +664,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "saves your workout data to Health";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -802,15 +808,16 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ExpandableExerciseTimerWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ExpandableExerciseTimerWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Exercise Timer uses Health data like heart rate and active energy to display live workout metrics on Apple Watch.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Exercise Timer writes your completed workouts to the Health app so they're saved in your activity history.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = rocks.scruggsfam.productions.ExpandableExerciseTimer;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -838,15 +845,16 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ExpandableExerciseTimerWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ExpandableExerciseTimerWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Exercise Timer uses Health data like heart rate and active energy to display live workout metrics on Apple Watch.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Exercise Timer writes your completed workouts to the Health app so they're saved in your activity history.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = rocks.scruggsfam.productions.ExpandableExerciseTimer;
 				LD_RUNPATH_SEARCH_PATHS = (

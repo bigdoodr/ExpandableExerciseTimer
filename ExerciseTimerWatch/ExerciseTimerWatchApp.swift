@@ -9,6 +9,13 @@ struct ExerciseTimerWatchApp: App {
     @StateObject private var connectivityManager = WatchConnectivityManager.shared
     @StateObject private var healthKitManager = HealthKitWorkoutManager.shared
     
+    init() {
+        // Request HealthKit authorization at app launch
+        Task {
+            await HealthKitWorkoutManager.shared.requestAuthorization()
+        }
+    }
+    
     var body: some Scene {
         WindowGroup {
             WatchWorkoutView()

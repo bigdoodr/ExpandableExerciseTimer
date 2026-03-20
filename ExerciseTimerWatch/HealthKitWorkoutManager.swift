@@ -12,20 +12,41 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var heartRate: Double = 0
     @Published var activeCalories: Double = 0
     @Published var startError: String?
+    @Published var isAuthorized = false
     
     private var workoutSession: HKWorkoutSession?
     private var workoutBuilder: HKLiveWorkoutBuilder?
     
     func requestAuthorization() async {
+        // Check if HealthKit is available on this device
+        guard HKHealthStore.isHealthDataAvailable() else {
+            print("HealthKit is not available on this device")
+            startError = "HealthKit not available"
+            return
+        }
+        
         let typesToShare: Set<HKSampleType> = [HKObjectType.workoutType()]
         let typesToRead: Set<HKObjectType> = [
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
             HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!
         ]
+        
         do {
             try await healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead)
+            
+            // Check authorization status for heart rate (a good indicator)
+            let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+            let status = healthStore.authorizationStatus(for: heartRateType)
+            
+            isAuthorized = (status == .sharingAuthorized)
+            
+            if !isAuthorized {
+                print("HealthKit authorization status: \(status.rawValue)")
+            }
         } catch {
             print("HealthKit authorization failed: \(error)")
+            startError = "Authorization failed: \(error.localizedDescription)"
+            isAuthorized = false
         }
     }
     
