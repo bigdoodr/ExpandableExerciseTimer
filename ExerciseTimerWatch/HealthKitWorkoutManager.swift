@@ -15,13 +15,20 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var isAuthorized = false
     
     private var workoutSession: HKWorkoutSession?
-    private var workoutBuilder: HKLiveWorkoutBuilder?
+    
+    // iOS 26+ uses HKLiveWorkoutBuilder
+    // Note: Stored as Any? to avoid @available on stored property
+    private var liveWorkoutBuilder: Any?
+    
+    // Pre-iOS 26 uses HKWorkoutBuilder
+    private var legacyWorkoutBuilder: Any?
     
     func requestAuthorization() async {
         // Check if HealthKit is available on this device
         guard HKHealthStore.isHealthDataAvailable() else {
             print("HealthKit is not available on this device")
             startError = "HealthKit not available"
+            isAuthorized = false
             return
         }
         
@@ -34,14 +41,22 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         do {
             try await healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead)
             
-            // Check authorization status for heart rate (a good indicator)
-            let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
-            let status = healthStore.authorizationStatus(for: heartRateType)
+            // For write permissions (workouts), we can check authorization status
+            // For read permissions (heart rate), iOS may not reveal authorization status for privacy
+            // So we'll check write permissions and assume success if no error was thrown
+            let workoutType = HKObjectType.workoutType()
+            let writeStatus = healthStore.authorizationStatus(for: workoutType)
             
-            isAuthorized = (status == .sharingAuthorized)
+            // If we can write workouts, consider it authorized
+            // (Read permissions may show as .notDetermined for privacy even if granted)
+            isAuthorized = (writeStatus == .sharingAuthorized)
             
             if !isAuthorized {
-                print("HealthKit authorization status: \(status.rawValue)")
+                print("HealthKit write authorization status: \(writeStatus.rawValue)")
+                startError = "HealthKit permission denied. Please grant access in Settings."
+            } else {
+                print("HealthKit authorization granted")
+                startError = nil
             }
         } catch {
             print("HealthKit authorization failed: \(error)")
@@ -55,43 +70,67 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         
         // Force-clean any stale session from a previous workout
         if workoutSession != nil {
-            let session = workoutSession
-            let builder = workoutBuilder
-            workoutSession = nil
-            workoutBuilder = nil
-            isWorkoutActive = false
-            session?.end()
-            if let builder {
-                try? await builder.endCollection(at: Date())
-                try? await builder.finishWorkout()
-            }
+            await cleanupSession()
         }
         
         do {
-            let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
-            let builder = session.associatedWorkoutBuilder()
-            builder.dataSource = HKLiveWorkoutDataSource(
-                healthStore: healthStore,
-                workoutConfiguration: configuration
-            )
-            session.delegate = self
-            builder.delegate = self
-            
-            self.workoutSession = session
-            self.workoutBuilder = builder
-            
-            let startDate = Date()
-            session.startActivity(with: startDate)
-            try await builder.beginCollection(at: startDate)
-            isWorkoutActive = true
+            if #available(iOS 26.0, *) {
+                // iOS 26+ modern API
+                let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
+                let builder = session.associatedWorkoutBuilder()
+                builder.dataSource = HKLiveWorkoutDataSource(
+                    healthStore: healthStore,
+                    workoutConfiguration: configuration
+                )
+                session.delegate = self
+                builder.delegate = self
+                
+                self.workoutSession = session
+                self.liveWorkoutBuilder = builder
+                
+                let startDate = Date()
+                session.startActivity(with: startDate)
+                try await builder.beginCollection(at: startDate)
+                isWorkoutActive = true
+            } else {
+                // Legacy API for iOS versions before 26
+                // Note: HKWorkoutSession and related APIs are available from iOS 10+
+                // but the specific initializer and methods may vary
+                startError = "Workout sessions require iOS 26.0 or later"
+                print("HealthKit workout sessions require iOS 26.0+")
+            }
         } catch {
             print("Failed to start workout session: \(error)")
             startError = error.localizedDescription
             // Clean up on failure
             workoutSession?.end()
             workoutSession = nil
-            workoutBuilder = nil
+            liveWorkoutBuilder = nil
+            legacyWorkoutBuilder = nil
         }
+    }
+    
+    private func cleanupSession() async {
+        let session = workoutSession
+        workoutSession = nil
+        isWorkoutActive = false
+        
+        session?.end()
+        
+        if #available(iOS 26.0, *) {
+            if let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder {
+                liveWorkoutBuilder = nil
+                do {
+                    try await builder.endCollection(at: Date())
+                    _ = try await builder.finishWorkout()
+                } catch {
+                    print("Error cleaning up iOS 26+ session: \(error)")
+                }
+            }
+        }
+        
+        // Clear legacy builder if it exists
+        legacyWorkoutBuilder = nil
     }
     
     func pauseWorkout() {
@@ -104,25 +143,30 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     
     func endWorkout() async {
         let session = workoutSession
-        let builder = workoutBuilder
         
         // Clear references first to prevent stale state
         workoutSession = nil
-        workoutBuilder = nil
         isWorkoutActive = false
         heartRate = 0
         activeCalories = 0
         
         // Then attempt graceful shutdown
         session?.end()
-        if let builder {
-            do {
-                try await builder.endCollection(at: Date())
-                try await builder.finishWorkout()
-            } catch {
-                print("Failed to end workout: \(error)")
+        
+        if #available(iOS 26.0, *) {
+            if let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder {
+                liveWorkoutBuilder = nil
+                do {
+                    try await builder.endCollection(at: Date())
+                    _ = try await builder.finishWorkout()
+                } catch {
+                    print("Failed to end workout: \(error)")
+                }
             }
         }
+        
+        // Clear legacy builder if it exists
+        legacyWorkoutBuilder = nil
     }
     
     static func workoutConfiguration(for activityTypeName: String?) -> HKWorkoutConfiguration {
@@ -181,6 +225,9 @@ extension HealthKitWorkoutManager: HKWorkoutSessionDelegate {
     }
 }
 
+// MARK: - iOS 26+ Live Workout Builder Delegate
+
+@available(iOS 26.0, *)
 extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
     nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {
         // Events collected automatically
@@ -209,3 +256,4 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
         }
     }
 }
+

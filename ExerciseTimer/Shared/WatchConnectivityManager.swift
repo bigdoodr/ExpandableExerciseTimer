@@ -1,8 +1,11 @@
 import Foundation
-
-#if os(iOS) || os(watchOS)
-import WatchConnectivity
 internal import Combine
+
+#if canImport(WatchConnectivity)
+import WatchConnectivity
+#endif
+
+#if canImport(WatchConnectivity)
 
 @MainActor
 final class WatchConnectivityManager: NSObject, ObservableObject {

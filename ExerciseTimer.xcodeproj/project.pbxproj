@@ -12,6 +12,7 @@
 		CA94BC902F60BE7D00C90CE6 /* HealthKitWorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA94BC732F6048E200C90CE6 /* HealthKitWorkoutManager.swift */; };
 		CA94BC912F60BE8C00C90CE6 /* WatchWorkoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA94BC742F60490E00C90CE6 /* WatchWorkoutView.swift */; };
 		CA94BCA32F657BB800C90CE6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CA94BCA22F657BB800C90CE6 /* Assets.xcassets */; };
+		CACA56032F6E2A4C007F017F /* HealthKitWorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA94BC732F6048E200C90CE6 /* HealthKitWorkoutManager.swift */; platformFilter = ios; };
 		CAD94DCC2F6AECA400388A6B /* WatchWorkoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD94DCB2F6AECA400388A6B /* WatchWorkoutEngine.swift */; };
 /* End PBXBuildFile section */
 
@@ -76,6 +77,9 @@
 			membershipExceptions = (
 				Info.plist,
 			);
+			platformFiltersByRelativePath = {
+				Shared/WatchConnectivityManager.swift = (ios, );
+			};
 			target = 2D8564AB2EE4E04300DC78F6 /* ExerciseTimer */;
 		};
 		CA94BC932F60BEA800C90CE6 /* Exceptions for "ExerciseTimer" folder in "ExpandableExerciseTimerWatch" target */ = {
@@ -396,6 +400,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CACA56032F6E2A4C007F017F /* HealthKitWorkoutManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -584,7 +589,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExerciseTimer/ExerciseTimer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_APP_SANDBOX = YES;
@@ -604,7 +609,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "saves your workout data to Health";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -644,7 +650,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExerciseTimer/ExerciseTimer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_APP_SANDBOX = YES;
@@ -664,7 +670,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "saves your workout data to Health";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -810,7 +817,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExpandableExerciseTimerWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -847,7 +854,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExpandableExerciseTimerWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;

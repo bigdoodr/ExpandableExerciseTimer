@@ -74,6 +74,20 @@ final class WatchWorkoutEngine: ObservableObject {
         }
     }
     
+    /// Send current workout state to iPhone (when in local mode)
+    func sendStateToPhone(_ connectivity: WatchConnectivityManager) {
+        guard source == .local else { return }
+        let command = WorkoutCommand.updatePhase(
+            exerciseIndex: currentExerciseIndex,
+            set: currentSet,
+            isResting: isResting,
+            isPaused: isPaused,
+            phaseEndDate: (currentExercise?.isTimeBased == true || isResting) ? phaseEndDate : nil,
+            isCompleted: isCompleted
+        )
+        connectivity.sendWorkoutCommand(command)
+    }
+    
     func togglePause() {
         if isPaused {
             // Resume: recalculate phaseEndDate from stored remaining time

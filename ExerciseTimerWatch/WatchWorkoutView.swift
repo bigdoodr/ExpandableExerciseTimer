@@ -216,6 +216,9 @@ struct WatchWorkoutView: View {
                                     healthKit.resumeWorkout()
                                 }
                             }
+                            // Sync pause/resume state to iPhone
+                            connectivity.sendWorkoutCommand(engine.isPaused ? .pause : .resume)
+                            engine.sendStateToPhone(connectivity)
                         }) {
                             HStack {
                                 Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
@@ -241,6 +244,10 @@ struct WatchWorkoutView: View {
         }
         .onReceive(timer) { _ in
             engine.tickTimer()
+            // Sync state to iPhone every timer tick when in local mode
+            if engine.source == .local {
+                engine.sendStateToPhone(connectivity)
+            }
         }
         .onChange(of: connectivity.receivedCommand) { _, command in
             handleCommand(command)
@@ -266,11 +273,21 @@ struct WatchWorkoutView: View {
         let hkEnabled = connectivity.receivedHealthKitEnabled
         let actType = connectivity.receivedActivityType
         
+        // Notify iPhone that watch is starting the workout
+        connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType))
+        
         engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
         
         if hkEnabled {
             Task {
                 await healthKit.requestAuthorization()
+                
+                // Check if we actually got authorization
+                if !healthKit.isAuthorized {
+                    healthKit.startError = "HealthKit permission not granted. Please enable in Settings > Privacy & Security > Health."
+                    return
+                }
+                
                 let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
                 await healthKit.startWorkoutSession(with: config)
             }
@@ -279,6 +296,12 @@ struct WatchWorkoutView: View {
     
     private func endWorkout() {
         engine.stopWorkout()
+        
+        // Notify iPhone that workout ended
+        if engine.source == .local {
+            connectivity.sendWorkoutCommand(.stop)
+        }
+        
         Task {
             await healthKit.endWorkout()
         }
@@ -296,6 +319,13 @@ struct WatchWorkoutView: View {
             if hkEnabled {
                 Task {
                     await healthKit.requestAuthorization()
+                    
+                    // Check if we actually got authorization
+                    if !healthKit.isAuthorized {
+                        healthKit.startError = "HealthKit permission not granted. Please enable in Settings > Privacy & Security > Health."
+                        return
+                    }
+                    
                     let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
                     await healthKit.startWorkoutSession(with: config)
                 }

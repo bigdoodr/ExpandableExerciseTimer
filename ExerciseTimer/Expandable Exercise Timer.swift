@@ -1,11 +1,20 @@
 import SwiftUI
 import AVFoundation
-#if os(iOS)
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(UserNotifications)
 import UserNotifications
+#endif
+#if canImport(HealthKit)
+import HealthKit
 #endif
 import UniformTypeIdentifiers
 internal import Combine
+
+// Ensure all manager classes are available (they should be in the same target)
+// If HealthKitWorkoutManager.swift is not in your target, add it via:
+// Project Navigator → Select file → File Inspector → Target Membership
 
 fileprivate struct WorkoutUndoAction: Codable {
     let exerciseIndex: Int
@@ -29,9 +38,14 @@ struct ExerciseListView: View {
     @State private var showingImporter = false
     @State private var showingExporter = false
     @State private var exportURL: URL?
-#if os(iOS)
+#if canImport(WatchConnectivity)
+    @StateObject private var connectivity = WatchConnectivityManager.shared
+#endif
+#if canImport(UIKit)
     @State private var keepScreenAwake = false
     @State private var enableBackgroundAudio = false
+#endif
+#if canImport(HealthKit)
     @State private var enableHealthKitTracking = false
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
 #endif
@@ -41,15 +55,18 @@ struct ExerciseListView: View {
     
     var body: some View {
         NavigationStack {
-#if os(iOS)
+#if canImport(WatchConnectivity)
             if isWorkoutActive {
-                WorkoutView(exercises: exercises, isActive: $isWorkoutActive, keepScreenAwake: $keepScreenAwake, enableBackgroundAudio: $enableBackgroundAudio, healthKitEnabled: enableHealthKitTracking, activityType: selectedActivityType)
+                workoutViewForPlatform
             } else {
                 builderView
+                    .onChange(of: connectivity.receivedCommand) { _, command in
+                        handleWatchCommand(command)
+                    }
             }
 #else
             if isWorkoutActive {
-                WorkoutView(exercises: exercises, isActive: $isWorkoutActive)
+                workoutViewForPlatform
             } else {
                 builderView
             }
@@ -57,13 +74,48 @@ struct ExerciseListView: View {
         }
     }
     
+    @ViewBuilder
+    private var workoutViewForPlatform: some View {
+        #if canImport(UIKit) && canImport(HealthKit)
+        WorkoutView(
+            exercises: exercises,
+            isActive: $isWorkoutActive,
+            keepScreenAwake: $keepScreenAwake,
+            enableBackgroundAudio: $enableBackgroundAudio,
+            healthKitEnabled: enableHealthKitTracking,
+            activityType: selectedActivityType
+        )
+        #elseif canImport(UIKit)
+        WorkoutView(
+            exercises: exercises,
+            isActive: $isWorkoutActive,
+            keepScreenAwake: $keepScreenAwake,
+            enableBackgroundAudio: $enableBackgroundAudio
+        )
+        #elseif canImport(HealthKit)
+        WorkoutView(
+            exercises: exercises,
+            isActive: $isWorkoutActive,
+            healthKitEnabled: enableHealthKitTracking,
+            activityType: selectedActivityType
+        )
+        #else
+        WorkoutView(
+            exercises: exercises,
+            isActive: $isWorkoutActive
+        )
+        #endif
+    }
+    
     private var builderView: some View {
         List {
             exerciseListSection
             addExerciseSection
-#if os(iOS)
+#if canImport(UIKit)
             keepAwakeSection
             backgroundAudioSection
+#endif
+#if canImport(HealthKit)
             healthKitSection
 #endif
             startSection
@@ -143,7 +195,7 @@ struct ExerciseListView: View {
         }
     }
     
-#if os(iOS)
+#if canImport(UIKit)
     @ViewBuilder
     private var keepAwakeSection: some View {
         Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
@@ -169,7 +221,9 @@ struct ExerciseListView: View {
             .toggleStyle(.switch)
         }
     }
+#endif
     
+#if canImport(HealthKit)
     @ViewBuilder
     private var healthKitSection: some View {
         Section(footer: Text("When enabled, workouts are recorded to Apple Health via Apple Watch. Requires a paired Apple Watch. Disable this for non-exercise timers.")) {
@@ -192,12 +246,11 @@ struct ExerciseListView: View {
     }
 #endif
     
-    
     @ViewBuilder
     private var startSection: some View {
         Section {
             Button(action: {
-#if os(iOS)
+#if canImport(WatchConnectivity) && canImport(HealthKit)
                 let command = WorkoutCommand.start(
                     exercises: exercises,
                     healthKitEnabled: enableHealthKitTracking,
@@ -264,7 +317,7 @@ struct ExerciseListView: View {
         if let data = try? JSONEncoder().encode(exercises) {
             UserDefaults.standard.set(data, forKey: exercisesDefaultsKey)
         }
-#if os(iOS)
+#if canImport(WatchConnectivity) && canImport(HealthKit)
         WatchConnectivityManager.shared.updateContext(
             exercises: exercises,
             healthKitEnabled: enableHealthKitTracking,
@@ -272,6 +325,28 @@ struct ExerciseListView: View {
         )
 #endif
     }
+    
+#if canImport(WatchConnectivity)
+    /// Handle workout commands received from Apple Watch
+    private func handleWatchCommand(_ command: WorkoutCommand?) {
+        guard let command else { return }
+        
+        switch command {
+        case .start(let exerciseList, _, _):
+            // Watch is starting a workout, so start on iPhone too
+            exercises = exerciseList
+            isWorkoutActive = true
+            
+        case .stop:
+            // Watch ended workout, end on iPhone
+            isWorkoutActive = false
+            
+        default:
+            // Other commands (updatePhase, pause, resume) are handled by WorkoutView
+            break
+        }
+    }
+#endif
 }
 
 struct ExerciseEntryView: View {
@@ -509,11 +584,19 @@ struct DurationPickerView: View {
 struct WorkoutView: View {
     let exercises: [Exercise]
     @Binding var isActive: Bool
-#if os(iOS)
+#if canImport(UIKit)
     @Binding var keepScreenAwake: Bool
     @Binding var enableBackgroundAudio: Bool
+#endif
+#if canImport(HealthKit)
     var healthKitEnabled: Bool
     var activityType: WorkoutActivityOption
+#endif
+#if canImport(WatchConnectivity)
+    @StateObject private var connectivity = WatchConnectivityManager.shared
+#endif
+#if canImport(HealthKit)
+    @StateObject private var healthKitManager = HealthKitWorkoutManager.shared
 #endif
     
     @State private var currentExerciseIndex = 0
@@ -526,12 +609,13 @@ struct WorkoutView: View {
     @State private var isCompleted = false
     @State private var isExiting = false
     @State private var pausedTimeRemaining: TimeInterval? = nil
+    @State private var isWatchDriven = false  // Track if watch is controlling the workout
     
     @State private var undoAction: WorkoutUndoAction? = nil
     @State private var showUndoToast = false
     
     let audioEngine = AVAudioEngine()
-#if os(iOS)
+#if canImport(UIKit)
     private let backgroundPlayerNode = AVAudioPlayerNode()
     @State private var isBackgroundLoopRunning = false
 #endif
@@ -678,7 +762,15 @@ struct WorkoutView: View {
                         .padding(.horizontal)
                 }
                 
-#if os(iOS)
+#if canImport(HealthKit) && canImport(UIKit)
+                // HealthKit Metrics Display
+                if healthKitEnabled && healthKitManager.isWorkoutActive {
+                    healthKitMetricsView
+                        .padding(.horizontal)
+                }
+#endif
+                
+#if canImport(UIKit)
                 // Two-row layout in compact width: first row Pause/Cancel, second row Awake and Background Audio
                 Group {
                     if horizontalSizeClass == .compact {
@@ -722,15 +814,27 @@ struct WorkoutView: View {
             }
         }
         .onAppear {
-#if os(iOS)
+#if canImport(UIKit)
             configureAudioSession()
             if enableBackgroundAudio {
                 startBackgroundAudioLoop()
             }
 #endif
+#if canImport(HealthKit)
+            // Start HealthKit workout session
+            if healthKitEnabled {
+                Task {
+                    await healthKitManager.requestAuthorization()
+                    if healthKitManager.isAuthorized {
+                        let config = HealthKitWorkoutManager.workoutConfiguration(for: activityType.rawValue)
+                        await healthKitManager.startWorkoutSession(with: config)
+                    }
+                }
+            }
+#endif
             requestNotificationPermission()
             startCurrentPhase()
-#if os(iOS)
+#if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
         }
@@ -738,8 +842,16 @@ struct WorkoutView: View {
             Button("Done") {
                 isExiting = true
                 showingCompletion = false
-#if os(iOS)
+#if canImport(UIKit)
                 UIApplication.shared.isIdleTimerDisabled = false
+#endif
+#if canImport(HealthKit)
+                // End HealthKit workout session
+                if healthKitEnabled && healthKitManager.isWorkoutActive {
+                    Task {
+                        await healthKitManager.endWorkout()
+                    }
+                }
 #endif
                 DispatchQueue.main.async {
                     isActive = false
@@ -758,7 +870,7 @@ struct WorkoutView: View {
                 }
             }
         }
-#if os(iOS)
+#if canImport(UIKit)
         .onChange(of: keepScreenAwake) { _, newValue in
             UIApplication.shared.isIdleTimerDisabled = newValue
         }
@@ -770,13 +882,26 @@ struct WorkoutView: View {
             }
         }
 #endif
+#if canImport(WatchConnectivity)
+        .onChange(of: connectivity.receivedCommand) { _, command in
+            handleWatchWorkoutCommand(command)
+        }
+#endif
         .onDisappear {
             cancelPhaseEndNotification()
-#if os(iOS)
+#if canImport(UIKit)
             stopBackgroundAudioLoop()
 #endif
+#if canImport(HealthKit)
+            // End HealthKit workout session
+            if healthKitEnabled && healthKitManager.isWorkoutActive {
+                Task {
+                    await healthKitManager.endWorkout()
+                }
+            }
+#endif
             if audioEngine.isRunning { audioEngine.stop() }
-#if os(iOS)
+#if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = false
 #endif
         }
@@ -804,8 +929,11 @@ struct WorkoutView: View {
         }
     }
     
-#if os(iOS)
+#if canImport(WatchConnectivity)
     private func sendStateToWatch() {
+        // Don't send updates if watch is driving the workout
+        guard !isWatchDriven else { return }
+        
         let command = WorkoutCommand.updatePhase(
             exerciseIndex: currentExerciseIndex,
             set: currentSet,
@@ -815,6 +943,54 @@ struct WorkoutView: View {
             isCompleted: isCompleted
         )
         WatchConnectivityManager.shared.sendWorkoutCommand(command)
+    }
+    
+    /// Handle workout commands from Apple Watch
+    private func handleWatchWorkoutCommand(_ command: WorkoutCommand?) {
+        guard let command else { return }
+        
+        switch command {
+        case .start:
+            // Watch started the workout, already handled in ExerciseListView
+            break
+            
+        case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
+            // Watch is controlling the workout, sync state
+            isWatchDriven = true
+            currentExerciseIndex = exerciseIndex
+            currentSet = set
+            isResting = resting
+            isPaused = paused
+            isCompleted = completed
+            
+            if let endDate {
+                phaseEndDate = endDate
+                timeRemaining = max(0, endDate.timeIntervalSinceNow)
+            }
+            
+            if completed {
+                showingCompletion = true
+            }
+            
+        case .pause:
+            let remaining = max(0, phaseEndDate.timeIntervalSinceNow)
+            pausedTimeRemaining = remaining
+            timeRemaining = remaining
+            isPaused = true
+            cancelPhaseEndNotification()
+            
+        case .resume:
+            if let remaining = pausedTimeRemaining {
+                phaseEndDate = Date().addingTimeInterval(remaining)
+                timeRemaining = remaining
+                pausedTimeRemaining = nil
+                schedulePhaseEndNotification(in: remaining)
+            }
+            isPaused = false
+            
+        case .stop:
+            beginExit()
+        }
     }
 #endif
     
@@ -827,12 +1003,22 @@ struct WorkoutView: View {
         showingCompletion = false
         // Stop notifications and audio synchronously
         cancelPhaseEndNotification()
-#if os(iOS)
+#if canImport(UIKit)
         stopBackgroundAudioLoop()
+#endif
+#if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendWorkoutCommand(.stop)
 #endif
+#if canImport(HealthKit)
+        // End HealthKit workout session
+        if healthKitEnabled && healthKitManager.isWorkoutActive {
+            Task {
+                await healthKitManager.endWorkout()
+            }
+        }
+#endif
         if audioEngine.isRunning { audioEngine.stop() }
-#if os(iOS)
+#if canImport(UIKit)
         UIApplication.shared.isIdleTimerDisabled = false
 #endif
         // Flip navigation on next runloop tick
@@ -857,7 +1043,7 @@ struct WorkoutView: View {
         phaseEndDate = Date().addingTimeInterval(duration)
         timeRemaining = max(0, duration)
         schedulePhaseEndNotification(in: duration)
-#if os(iOS)
+#if canImport(WatchConnectivity)
         sendStateToWatch()
 #endif
     }
@@ -880,7 +1066,7 @@ struct WorkoutView: View {
                     isCompleted = true
                     timeRemaining = 0
                     showingCompletion = true
-#if os(iOS)
+#if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
                     return
@@ -890,7 +1076,7 @@ struct WorkoutView: View {
                     startCurrentPhase()
                 } else {
                     timeRemaining = 0
-#if os(iOS)
+#if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
                 }
@@ -918,7 +1104,7 @@ struct WorkoutView: View {
                         isCompleted = true
                         timeRemaining = 0
                         showingCompletion = true
-#if os(iOS)
+#if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
                         return
@@ -930,7 +1116,7 @@ struct WorkoutView: View {
                     } else {
                         isResting = false
                         timeRemaining = 0
-#if os(iOS)
+#if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
                     }
@@ -1017,7 +1203,7 @@ struct WorkoutView: View {
             return true
         }()
         advanceWorkout()
-#if os(iOS)
+#if canImport(WatchConnectivity)
         sendStateToWatch()
 #endif
         undoAction = WorkoutUndoAction(exerciseIndex: prevExerciseIndex, setBefore: prevSet, wasResting: prevWasResting, advancedExercise: willAdvanceExercise)
@@ -1056,8 +1242,84 @@ struct WorkoutView: View {
         }
     }
     
-#if os(iOS)
+#if canImport(UIKit)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var healthKitMetricsView: some View {
+        VStack(spacing: 12) {
+            Text("Health Metrics")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            
+            HStack(spacing: 20) {
+                heartRateMetric
+                
+                Divider()
+                    .frame(height: 60)
+                
+                caloriesMetric
+            }
+        }
+        .padding()
+        .background(Color(uiColor: .systemGray6))
+        .cornerRadius(16)
+    }
+    
+    private var heartRateMetric: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "heart.fill")
+                    .foregroundStyle(.red)
+                Text("Heart Rate")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            
+            if healthKitManager.heartRate > 0 {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("\(Int(healthKitManager.heartRate))")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("BPM")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("--")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private var caloriesMetric: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "flame.fill")
+                    .foregroundStyle(.orange)
+                Text("Calories")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            
+            if healthKitManager.activeCalories > 0 {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("\(Int(healthKitManager.activeCalories))")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("CAL")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("--")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
 
     private var awakeButton: some View {
         Button(action: { keepScreenAwake.toggle() }) {
@@ -1109,7 +1371,7 @@ struct WorkoutView: View {
                 isPaused = true
                 cancelPhaseEndNotification()
             }
-#if os(iOS)
+#if canImport(WatchConnectivity)
             WatchConnectivityManager.shared.sendWorkoutCommand(isPaused ? .pause : .resume)
             sendStateToWatch()
 #endif
@@ -1142,7 +1404,7 @@ struct WorkoutView: View {
         }
     }
     
-#if os(iOS)
+#if canImport(UIKit)
     private func configureAudioSession() {
         let audioSession = AVAudioSession.sharedInstance()
         try? audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -1150,7 +1412,7 @@ struct WorkoutView: View {
     }
 #endif
     
-#if os(iOS)
+#if canImport(UIKit)
     private func startBackgroundAudioLoop() {
         guard !isBackgroundLoopRunning else { return }
         let sampleRate: Double = 44100
@@ -1188,7 +1450,7 @@ struct WorkoutView: View {
     }
 #endif
     
-#if os(iOS)
+#if canImport(UserNotifications)
     func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
@@ -1223,11 +1485,11 @@ struct WorkoutView: View {
         isCompleted = true
         isResting = false
         cancelPhaseEndNotification()
-#if os(iOS)
+#if canImport(UIKit)
         stopBackgroundAudioLoop()
 #endif
         if audioEngine.isRunning { audioEngine.stop() }
-#if os(iOS)
+#if canImport(UIKit)
         UIApplication.shared.isIdleTimerDisabled = false
 #endif
         DispatchQueue.main.async {
