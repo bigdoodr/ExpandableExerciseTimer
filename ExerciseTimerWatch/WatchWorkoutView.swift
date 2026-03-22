@@ -8,6 +8,9 @@ struct WatchWorkoutView: View {
     @StateObject private var engine = WatchWorkoutEngine()
     @Environment(\.scenePhase) private var scenePhase
     
+    /// Tracks when we last sent health data to throttle updates
+    @State private var lastHealthDataSend: Date = .distantPast
+    
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     
     var body: some View {
@@ -247,6 +250,16 @@ struct WatchWorkoutView: View {
             // Sync state to iPhone every timer tick when in local mode
             if engine.source == .local {
                 engine.sendStateToPhone(connectivity)
+                
+                // Forward HealthKit data to iPhone, throttled to every 2 seconds
+                if healthKit.isWorkoutActive,
+                   Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
+                    connectivity.sendWorkoutCommand(
+                        .healthData(heartRate: healthKit.heartRate,
+                                    activeCalories: healthKit.activeCalories)
+                    )
+                    lastHealthDataSend = Date()
+                }
             }
         }
         .onChange(of: connectivity.receivedCommand) { _, command in
@@ -332,6 +345,8 @@ struct WatchWorkoutView: View {
             }
             
         case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
+            // Ignore remote phase updates if the watch is driving the workout locally
+            guard engine.source != .local else { break }
             engine.applyRemoteUpdate(
                 exerciseIndex: exerciseIndex, set: set, isResting: resting,
                 isPaused: paused, phaseEndDate: endDate, isCompleted: completed
@@ -345,12 +360,16 @@ struct WatchWorkoutView: View {
             }
             
         case .pause:
+            // Ignore remote pause if watch is driving locally
+            guard engine.source != .local else { break }
             engine.isPaused = true
             if healthKit.isWorkoutActive {
                 healthKit.pauseWorkout()
             }
             
         case .resume:
+            // Ignore remote resume if watch is driving locally
+            guard engine.source != .local else { break }
             engine.isPaused = false
             if healthKit.isWorkoutActive {
                 healthKit.resumeWorkout()
@@ -359,6 +378,10 @@ struct WatchWorkoutView: View {
         case .stop:
             engine.stopWorkout()
             Task { await healthKit.endWorkout() }
+            
+        case .healthData:
+            // Health data is sent from watch to iPhone; ignore if received on watch
+            break
         }
     }
 }

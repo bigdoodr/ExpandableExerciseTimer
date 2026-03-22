@@ -38,10 +38,13 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
                 print("WC sendMessage failed: \(error.localizedDescription)")
-                // Fallback to transferUserInfo for reliability
+                // Fallback to transferUserInfo for reliability (skip for frequent health data)
+                if case .healthData = command { return }
                 session.transferUserInfo(message)
             }
         } else {
+            // Skip non-reachable sends for frequent health data updates
+            if case .healthData = command { return }
             session.transferUserInfo(message)
         }
     }

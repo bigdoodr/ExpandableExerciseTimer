@@ -66,7 +66,6 @@
 		CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExpandableExerciseTimerWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CA94BCA22F657BB800C90CE6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CA94BCA42F65930000C90CE6 /* ExpandableExerciseTimerWatch-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "ExpandableExerciseTimerWatch-Info.plist"; sourceTree = "<group>"; };
-		CA94BCA92F659B3500C90CE6 /* ExpandableExerciseTimer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExpandableExerciseTimer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CACA557D2F6D6869007F017F /* ExpandableExerciseTimerWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ExpandableExerciseTimerWatch.entitlements; sourceTree = "<group>"; };
 		CAD94DCB2F6AECA400388A6B /* WatchWorkoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWorkoutEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -144,13 +143,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		CA94BCA62F659B3500C90CE6 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -174,7 +166,6 @@
 				2D8564B92EE4E04600DC78F6 /* ExerciseTimerTests.xctest */,
 				2D8564C32EE4E04600DC78F6 /* ExerciseTimerUITests.xctest */,
 				CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */,
-				CA94BCA92F659B3500C90CE6 /* ExpandableExerciseTimer.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -285,25 +276,6 @@
 			productReference = CA94BC7B2F60751700C90CE6 /* ExpandableExerciseTimerWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
-		CA94BCA82F659B3500C90CE6 /* ExpandableExerciseTimer */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = CA94BCB12F659B3600C90CE6 /* Build configuration list for PBXNativeTarget "ExpandableExerciseTimer" */;
-			buildPhases = (
-				CA94BCA52F659B3500C90CE6 /* Sources */,
-				CA94BCA62F659B3500C90CE6 /* Frameworks */,
-				CA94BCA72F659B3500C90CE6 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = ExpandableExerciseTimer;
-			packageProductDependencies = (
-			);
-			productName = ExpandableExerciseTimer;
-			productReference = CA94BCA92F659B3500C90CE6 /* ExpandableExerciseTimer.app */;
-			productType = "com.apple.product-type.application";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -328,9 +300,6 @@
 					CA94BC7A2F60751700C90CE6 = {
 						CreatedOnToolsVersion = 26.3;
 					};
-					CA94BCA82F659B3500C90CE6 = {
-						CreatedOnToolsVersion = 26.3;
-					};
 				};
 			};
 			buildConfigurationList = 2D8564A72EE4E04300DC78F6 /* Build configuration list for PBXProject "ExerciseTimer" */;
@@ -351,7 +320,6 @@
 				2D8564B82EE4E04600DC78F6 /* ExerciseTimerTests */,
 				2D8564C22EE4E04600DC78F6 /* ExerciseTimerUITests */,
 				CA94BC7A2F60751700C90CE6 /* ExpandableExerciseTimerWatch */,
-				CA94BCA82F659B3500C90CE6 /* ExpandableExerciseTimer */,
 			);
 		};
 /* End PBXProject section */
@@ -383,13 +351,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				CA94BCA32F657BB800C90CE6 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		CA94BCA72F659B3500C90CE6 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -426,13 +387,6 @@
 				CA94BC902F60BE7D00C90CE6 /* HealthKitWorkoutManager.swift in Sources */,
 				CAD94DCC2F6AECA400388A6B /* WatchWorkoutEngine.swift in Sources */,
 				CA94BC8F2F60BE6B00C90CE6 /* ExerciseTimerWatchApp.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		CA94BCA52F659B3500C90CE6 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -589,7 +543,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExerciseTimer/ExerciseTimer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_APP_SANDBOX = YES;
@@ -650,7 +604,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExerciseTimer/ExerciseTimer.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_APP_SANDBOX = YES;
@@ -817,7 +771,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExpandableExerciseTimerWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -854,7 +808,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = ExpandableExerciseTimerWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = C7ZFPH2CB5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -882,69 +836,6 @@
 				TARGETED_DEVICE_FAMILY = 4;
 				VALIDATE_PRODUCT = YES;
 				WATCHOS_DEPLOYMENT_TARGET = 26.2;
-			};
-			name = Release;
-		};
-		CA94BCB22F659B3600C90CE6 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = C7ZFPH2CB5;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = rocks.scruggsfam.ExpandableExerciseTimer;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = appletvos;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 3;
-				TVOS_DEPLOYMENT_TARGET = 26.2;
-			};
-			name = Debug;
-		};
-		CA94BCB32F659B3600C90CE6 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = C7ZFPH2CB5;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIUserInterfaceStyle = Automatic;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = rocks.scruggsfam.ExpandableExerciseTimer;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = appletvos;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 3;
-				TVOS_DEPLOYMENT_TARGET = 26.2;
-				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -992,15 +883,6 @@
 			buildConfigurations = (
 				CA94BC872F60751700C90CE6 /* Debug */,
 				CA94BC882F60751700C90CE6 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		CA94BCB12F659B3600C90CE6 /* Build configuration list for PBXNativeTarget "ExpandableExerciseTimer" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				CA94BCB22F659B3600C90CE6 /* Debug */,
-				CA94BCB32F659B3600C90CE6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

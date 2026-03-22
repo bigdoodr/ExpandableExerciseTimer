@@ -8,6 +8,7 @@ enum WorkoutCommand: Codable, Equatable {
     case pause
     case resume
     case stop
+    case healthData(heartRate: Double, activeCalories: Double)
 }
 
 /// Keys for WatchConnectivity message/context dictionaries
