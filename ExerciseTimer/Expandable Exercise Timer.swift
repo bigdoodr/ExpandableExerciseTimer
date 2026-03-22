@@ -50,6 +50,7 @@ struct ExerciseListView: View {
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
 #endif
     @State private var showingResetConfirm = false
+    @State private var workoutStartedFromWatch = false
     
     private let exercisesDefaultsKey = "savedExercises"
     
@@ -83,26 +84,30 @@ struct ExerciseListView: View {
             keepScreenAwake: $keepScreenAwake,
             enableBackgroundAudio: $enableBackgroundAudio,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: selectedActivityType
+            activityType: selectedActivityType,
+            initiallyWatchDriven: workoutStartedFromWatch
         )
         #elseif canImport(UIKit)
         WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             keepScreenAwake: $keepScreenAwake,
-            enableBackgroundAudio: $enableBackgroundAudio
+            enableBackgroundAudio: $enableBackgroundAudio,
+            initiallyWatchDriven: workoutStartedFromWatch
         )
         #elseif canImport(HealthKit)
         WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: selectedActivityType
+            activityType: selectedActivityType,
+            initiallyWatchDriven: workoutStartedFromWatch
         )
         #else
         WorkoutView(
             exercises: exercises,
-            isActive: $isWorkoutActive
+            isActive: $isWorkoutActive,
+            initiallyWatchDriven: workoutStartedFromWatch
         )
         #endif
     }
@@ -258,6 +263,7 @@ struct ExerciseListView: View {
                 )
                 WatchConnectivityManager.shared.sendWorkoutCommand(command)
 #endif
+                workoutStartedFromWatch = false
                 isWorkoutActive = true
             }) {
                 HStack {
@@ -335,6 +341,7 @@ struct ExerciseListView: View {
         case .start(let exerciseList, _, _):
             // Watch is starting a workout, so start on iPhone too
             exercises = exerciseList
+            workoutStartedFromWatch = true
             isWorkoutActive = true
             
         case .stop:
@@ -592,6 +599,7 @@ struct WorkoutView: View {
     var healthKitEnabled: Bool
     var activityType: WorkoutActivityOption
 #endif
+    var initiallyWatchDriven: Bool = false
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
@@ -764,7 +772,8 @@ struct WorkoutView: View {
                 
 #if canImport(HealthKit) && canImport(UIKit)
                 // HealthKit Metrics Display
-                if healthKitEnabled && healthKitManager.isWorkoutActive {
+                // Show when iPhone session is active, or when watch is forwarding data
+                if healthKitEnabled && (healthKitManager.isWorkoutActive || isWatchDriven) {
                     healthKitMetricsView
                         .padding(.horizontal)
                 }
@@ -808,12 +817,18 @@ struct WorkoutView: View {
             if !isExiting && !isCompleted && !showingCompletion && !isPaused && (currentExercise.isTimeBased || isResting) {
                 let now = Date()
                 timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
-                if timeRemaining <= 0 {
+                // Only advance the workout locally when iPhone is driving
+                if timeRemaining <= 0 && !isWatchDriven {
                     timerExpired()
                 }
             }
         }
         .onAppear {
+            // If the watch started this workout, mark as watch-driven immediately
+            // so we don't send conflicting state updates back
+            if initiallyWatchDriven {
+                isWatchDriven = true
+            }
 #if canImport(UIKit)
             configureAudioSession()
             if enableBackgroundAudio {
@@ -821,8 +836,9 @@ struct WorkoutView: View {
             }
 #endif
 #if canImport(HealthKit)
-            // Start HealthKit workout session
-            if healthKitEnabled {
+            // Only start a local HealthKit session if iPhone is driving the workout.
+            // When watch is driving, it owns the HealthKit session and will forward data.
+            if healthKitEnabled && !isWatchDriven {
                 Task {
                     await healthKitManager.requestAuthorization()
                     if healthKitManager.isAuthorized {
@@ -833,7 +849,9 @@ struct WorkoutView: View {
             }
 #endif
             requestNotificationPermission()
-            startCurrentPhase()
+            if !isWatchDriven {
+                startCurrentPhase()
+            }
 #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
@@ -846,8 +864,8 @@ struct WorkoutView: View {
                 UIApplication.shared.isIdleTimerDisabled = false
 #endif
 #if canImport(HealthKit)
-                // End HealthKit workout session
-                if healthKitEnabled && healthKitManager.isWorkoutActive {
+                // End HealthKit workout session only if iPhone owns it
+                if healthKitEnabled && !isWatchDriven && healthKitManager.isWorkoutActive {
                     Task {
                         await healthKitManager.endWorkout()
                     }
@@ -893,11 +911,17 @@ struct WorkoutView: View {
             stopBackgroundAudioLoop()
 #endif
 #if canImport(HealthKit)
-            // End HealthKit workout session
-            if healthKitEnabled && healthKitManager.isWorkoutActive {
+            // End HealthKit workout session only if iPhone owns it (not watch-driven)
+            if healthKitEnabled && !isWatchDriven && healthKitManager.isWorkoutActive {
                 Task {
                     await healthKitManager.endWorkout()
                 }
+            }
+            // Reset forwarded health data when watch-driven workout ends
+            if isWatchDriven {
+                healthKitManager.heartRate = 0
+                healthKitManager.activeCalories = 0
+                healthKitManager.isWorkoutActive = false
             }
 #endif
             if audioEngine.isRunning { audioEngine.stop() }
@@ -990,6 +1014,15 @@ struct WorkoutView: View {
             
         case .stop:
             beginExit()
+            
+        case .healthData(let heartRate, let activeCalories):
+            // Receive live health data forwarded from the watch
+            healthKitManager.heartRate = heartRate
+            healthKitManager.activeCalories = activeCalories
+            // Mark as active so the metrics view shows
+            if !healthKitManager.isWorkoutActive {
+                healthKitManager.isWorkoutActive = true
+            }
         }
     }
 #endif
@@ -1010,8 +1043,8 @@ struct WorkoutView: View {
         WatchConnectivityManager.shared.sendWorkoutCommand(.stop)
 #endif
 #if canImport(HealthKit)
-        // End HealthKit workout session
-        if healthKitEnabled && healthKitManager.isWorkoutActive {
+        // End HealthKit workout session only if iPhone owns it
+        if healthKitEnabled && !isWatchDriven && healthKitManager.isWorkoutActive {
             Task {
                 await healthKitManager.endWorkout()
             }
