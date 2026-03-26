@@ -74,8 +74,8 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         }
         
         do {
-            if #available(iOS 26.0, *) {
-                // iOS 26+ modern API
+            if #available(iOS 26.0, watchOS 9.0, *) {
+                // iOS 26+ / watchOS 9+ modern API
                 let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
                 let builder = session.associatedWorkoutBuilder()
                 builder.dataSource = HKLiveWorkoutDataSource(
@@ -84,20 +84,17 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
                 )
                 session.delegate = self
                 builder.delegate = self
-                
+
                 self.workoutSession = session
                 self.liveWorkoutBuilder = builder
-                
+
                 let startDate = Date()
                 session.startActivity(with: startDate)
                 try await builder.beginCollection(at: startDate)
                 isWorkoutActive = true
             } else {
-                // Legacy API for iOS versions before 26
-                // Note: HKWorkoutSession and related APIs are available from iOS 10+
-                // but the specific initializer and methods may vary
-                startError = "Workout sessions require iOS 26.0 or later"
-                print("HealthKit workout sessions require iOS 26.0+")
+                startError = "Workout sessions require iOS 26.0 or watchOS 9.0 or later"
+                print("HealthKit workout sessions require iOS 26.0+ / watchOS 9.0+")
             }
         } catch {
             print("Failed to start workout session: \(error)")
@@ -117,14 +114,14 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         
         session?.end()
         
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, watchOS 9.0, *) {
             if let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder {
                 liveWorkoutBuilder = nil
                 do {
                     try await builder.endCollection(at: Date())
                     _ = try await builder.finishWorkout()
                 } catch {
-                    print("Error cleaning up iOS 26+ session: \(error)")
+                    print("Error cleaning up session: \(error)")
                 }
             }
         }
@@ -153,7 +150,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         // Then attempt graceful shutdown
         session?.end()
         
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, watchOS 9.0, *) {
             if let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder {
                 liveWorkoutBuilder = nil
                 do {
@@ -227,7 +224,7 @@ extension HealthKitWorkoutManager: HKWorkoutSessionDelegate {
 
 // MARK: - iOS 26+ Live Workout Builder Delegate
 
-@available(iOS 26.0, *)
+@available(iOS 26.0, watchOS 9.0, *)
 extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
     nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {
         // Events collected automatically

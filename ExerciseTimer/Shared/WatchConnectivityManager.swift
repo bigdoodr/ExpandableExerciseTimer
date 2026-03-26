@@ -38,13 +38,21 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
                 print("WC sendMessage failed: \(error.localizedDescription)")
-                // Fallback to transferUserInfo for reliability (skip for frequent health data)
-                if case .healthData = command { return }
+                // Only queue commands that are safe to deliver out-of-order later.
+                // Never queue .stop, .pause, .resume, or .healthData — these are either
+                // time-sensitive or can terminate an unrelated future workout session.
+                switch command {
+                case .healthData, .stop, .pause, .resume: return
+                default: break
+                }
                 session.transferUserInfo(message)
             }
         } else {
-            // Skip non-reachable sends for frequent health data updates
-            if case .healthData = command { return }
+            // When watch is unreachable, only queue durable setup commands.
+            switch command {
+            case .healthData, .stop, .pause, .resume: return
+            default: break
+            }
             session.transferUserInfo(message)
         }
     }
