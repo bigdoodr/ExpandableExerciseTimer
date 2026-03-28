@@ -166,6 +166,12 @@ struct ExerciseListView: View {
         .onChange(of: exercises) { _, _ in
             persistExercises()
         }
+        .onChange(of: enableHealthKitTracking) { _, _ in
+            persistExercises()
+        }
+        .onChange(of: selectedActivityType) { _, _ in
+            persistExercises()
+        }
     }
     
     @ViewBuilder
@@ -817,8 +823,10 @@ struct WorkoutView: View {
             if !isExiting && !isCompleted && !showingCompletion && !isPaused && (currentExercise.isTimeBased || isResting) {
                 let now = Date()
                 timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
-                // Only advance the workout locally when iPhone is driving
-                if timeRemaining <= 0 && !isWatchDriven {
+                // Advance the workout when the phase timer expires, regardless of
+                // who started the workout. When watch-driven, sendStateToWatch() is
+                // a no-op so no conflicting commands are sent back to the watch.
+                if timeRemaining <= 0 {
                     timerExpired()
                 }
             }

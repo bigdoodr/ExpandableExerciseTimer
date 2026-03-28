@@ -254,16 +254,6 @@ struct WatchWorkoutView: View {
             // Sync state to iPhone every timer tick when in local mode
             if engine.source == .local {
                 engine.sendStateToPhone(connectivity)
-                
-                // Forward HealthKit data to iPhone, throttled to every 2 seconds
-                if healthKit.isWorkoutActive,
-                   Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
-                    connectivity.sendWorkoutCommand(
-                        .healthData(heartRate: healthKit.heartRate,
-                                    activeCalories: healthKit.activeCalories)
-                    )
-                    lastHealthDataSend = Date()
-                }
             }
             // Forward HealthKit data to iPhone regardless of who started the workout,
             // since the watch is always the device with a heart rate sensor.
