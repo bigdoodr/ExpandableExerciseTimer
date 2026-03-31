@@ -32,7 +32,7 @@ struct WatchWorkoutView: View {
                 .font(.headline)
             
             if !connectivity.receivedExercises.isEmpty {
-                Button(action: startLocalWorkout) {
+                Button(action: startWorkout) {
                     HStack {
                         Image(systemName: "play.fill")
                         Text("Start Workout")
@@ -109,22 +109,19 @@ struct WatchWorkoutView: View {
                         .bold()
                         .foregroundStyle(.blue)
                     
-                    if engine.source == .local {
-                        Button(action: {
-                            engine.repsComplete()
-                        }) {
-                            Text("Reps Complete")
-                                .font(.caption)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(Color.blue)
-                                .cornerRadius(8)
-                        }
-                    } else {
-                        Text("Complete reps")
+                    Button(action: {
+                        // Haptic feedback immediately for responsiveness
+                        WKInterfaceDevice.current().play(.click)
+                        // Send command to iPhone — it will advance and send back updatePhase
+                        connectivity.sendWorkoutCommand(.repsComplete)
+                    }) {
+                        Text("Reps Complete")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.blue)
+                            .cornerRadius(8)
                     }
                 }
                 
@@ -212,31 +209,31 @@ struct WatchWorkoutView: View {
                     Divider()
                         .padding(.vertical, 4)
                     
-                    // Pause/Resume (local mode only)
-                    if engine.source == .local {
-                        Button(action: {
-                            engine.togglePause()
-                            if healthKit.isWorkoutActive {
-                                if engine.isPaused {
-                                    healthKit.pauseWorkout()
-                                } else {
-                                    healthKit.resumeWorkout()
-                                }
+                    // Pause/Resume — optimistic UI + send command to iPhone
+                    Button(action: {
+                        let willPause = !engine.isPaused
+                        // Optimistic UI update for instant feedback
+                        engine.isPaused = willPause
+                        // Sync HealthKit session
+                        if healthKit.isWorkoutActive {
+                            if willPause {
+                                healthKit.pauseWorkout()
+                            } else {
+                                healthKit.resumeWorkout()
                             }
-                            // Sync pause/resume state to iPhone
-                            connectivity.sendWorkoutCommand(engine.isPaused ? .pause : .resume)
-                            engine.sendStateToPhone(connectivity)
-                        }) {
-                            HStack {
-                                Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
-                                Text(engine.isPaused ? "Resume" : "Pause")
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.orange)
                         }
+                        // Send command to iPhone — it will handle timing and send back updatePhase
+                        connectivity.sendWorkoutCommand(willPause ? .pause : .resume)
+                    }) {
+                        HStack {
+                            Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
+                            Text(engine.isPaused ? "Resume" : "Pause")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                     }
                     
-                    // End workout (always available)
+                    // End workout
                     Button(action: endWorkout) {
                         HStack {
                             Image(systemName: "stop.fill")
@@ -251,12 +248,7 @@ struct WatchWorkoutView: View {
         }
         .onReceive(timer) { _ in
             engine.tickTimer()
-            // Sync state to iPhone every timer tick when in local mode
-            if engine.source == .local {
-                engine.sendStateToPhone(connectivity)
-            }
-            // Forward HealthKit data to iPhone regardless of who started the workout,
-            // since the watch is always the device with a heart rate sensor.
+            // Forward HealthKit data to iPhone since the watch has the sensors.
             // Throttled to every 2 seconds to avoid congestion.
             if healthKit.isWorkoutActive,
                Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
@@ -286,21 +278,22 @@ struct WatchWorkoutView: View {
     
     // MARK: - Actions
     
-    private func startLocalWorkout() {
+    private func startWorkout() {
         let exercises = connectivity.receivedExercises
         let hkEnabled = connectivity.receivedHealthKitEnabled
         let actType = connectivity.receivedActivityType
         
-        // Notify iPhone that watch is starting the workout
+        // Notify iPhone to start the workout (iPhone drives timers)
         connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType))
         
+        // Show workout UI immediately (optimistic); iPhone will send updatePhase with timing
         engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
         
+        // Watch always owns the HealthKit session
         if hkEnabled {
             Task {
                 await healthKit.requestAuthorization()
                 
-                // Check if we actually got authorization
                 if !healthKit.isAuthorized {
                     healthKit.startError = "HealthKit permission not granted. Please enable in Settings > Privacy & Security > Health."
                     return
@@ -316,9 +309,7 @@ struct WatchWorkoutView: View {
         engine.stopWorkout()
         
         // Notify iPhone that workout ended
-        if engine.source == .local {
-            connectivity.sendWorkoutCommand(.stop)
-        }
+        connectivity.sendWorkoutCommand(.stop)
         
         Task {
             await healthKit.endWorkout()
@@ -332,13 +323,13 @@ struct WatchWorkoutView: View {
         
         switch command {
         case .start(let exerciseList, let hkEnabled, let actType):
-            engine.applyRemoteStart(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
+            // iPhone started the workout — set up display and start HealthKit
+            engine.startWorkout(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
             
             if hkEnabled {
                 Task {
                     await healthKit.requestAuthorization()
                     
-                    // Check if we actually got authorization
                     if !healthKit.isAuthorized {
                         healthKit.startError = "HealthKit permission not granted. Please enable in Settings > Privacy & Security > Health."
                         return
@@ -350,9 +341,8 @@ struct WatchWorkoutView: View {
             }
             
         case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
-            // Ignore remote phase updates if the watch is driving the workout locally
-            guard engine.source != .local else { break }
-            engine.applyRemoteUpdate(
+            // iPhone is the timer authority — always accept state updates
+            engine.applyUpdate(
                 exerciseIndex: exerciseIndex, set: set, isResting: resting,
                 isPaused: paused, phaseEndDate: endDate, isCompleted: completed
             )
@@ -365,16 +355,12 @@ struct WatchWorkoutView: View {
             }
             
         case .pause:
-            // Ignore remote pause if watch is driving locally
-            guard engine.source != .local else { break }
             engine.isPaused = true
             if healthKit.isWorkoutActive {
                 healthKit.pauseWorkout()
             }
             
         case .resume:
-            // Ignore remote resume if watch is driving locally
-            guard engine.source != .local else { break }
             engine.isPaused = false
             if healthKit.isWorkoutActive {
                 healthKit.resumeWorkout()
@@ -386,6 +372,10 @@ struct WatchWorkoutView: View {
             
         case .healthData:
             // Health data is sent from watch to iPhone; ignore if received on watch
+            break
+            
+        case .repsComplete:
+            // Reps complete is sent from watch to iPhone; ignore if received on watch
             break
         }
     }

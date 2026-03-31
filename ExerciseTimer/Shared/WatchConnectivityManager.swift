@@ -29,7 +29,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
     
-    /// Send a workout command to the counterpart (used by iOS to control watch)
+    /// Send a workout command to the counterpart
     func sendWorkoutCommand(_ command: WorkoutCommand) {
         guard let session, session.activationState == .activated else { return }
         guard let data = try? JSONEncoder().encode(command) else { return }
@@ -39,18 +39,17 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
             session.sendMessage(message, replyHandler: nil) { error in
                 print("WC sendMessage failed: \(error.localizedDescription)")
                 // Only queue commands that are safe to deliver out-of-order later.
-                // Never queue .stop, .pause, .resume, or .healthData — these are either
-                // time-sensitive or can terminate an unrelated future workout session.
+                // Never queue time-sensitive or idempotent-breaking commands.
                 switch command {
-                case .healthData, .stop, .pause, .resume: return
+                case .healthData, .stop, .pause, .resume, .repsComplete: return
                 default: break
                 }
                 session.transferUserInfo(message)
             }
         } else {
-            // When watch is unreachable, only queue durable setup commands.
+            // When counterpart is unreachable, only queue durable setup commands.
             switch command {
-            case .healthData, .stop, .pause, .resume: return
+            case .healthData, .stop, .pause, .resume, .repsComplete: return
             default: break
             }
             session.transferUserInfo(message)

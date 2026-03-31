@@ -50,7 +50,6 @@ struct ExerciseListView: View {
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
 #endif
     @State private var showingResetConfirm = false
-    @State private var workoutStartedFromWatch = false
     
     private let exercisesDefaultsKey = "savedExercises"
     
@@ -84,30 +83,26 @@ struct ExerciseListView: View {
             keepScreenAwake: $keepScreenAwake,
             enableBackgroundAudio: $enableBackgroundAudio,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: selectedActivityType,
-            initiallyWatchDriven: workoutStartedFromWatch
+            activityType: selectedActivityType
         )
         #elseif canImport(UIKit)
         WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             keepScreenAwake: $keepScreenAwake,
-            enableBackgroundAudio: $enableBackgroundAudio,
-            initiallyWatchDriven: workoutStartedFromWatch
+            enableBackgroundAudio: $enableBackgroundAudio
         )
         #elseif canImport(HealthKit)
         WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: selectedActivityType,
-            initiallyWatchDriven: workoutStartedFromWatch
+            activityType: selectedActivityType
         )
         #else
         WorkoutView(
             exercises: exercises,
-            isActive: $isWorkoutActive,
-            initiallyWatchDriven: workoutStartedFromWatch
+            isActive: $isWorkoutActive
         )
         #endif
     }
@@ -269,7 +264,6 @@ struct ExerciseListView: View {
                 )
                 WatchConnectivityManager.shared.sendWorkoutCommand(command)
 #endif
-                workoutStartedFromWatch = false
                 isWorkoutActive = true
             }) {
                 HStack {
@@ -345,9 +339,8 @@ struct ExerciseListView: View {
         
         switch command {
         case .start(let exerciseList, _, _):
-            // Watch is starting a workout, so start on iPhone too
+            // Watch is starting a workout — iPhone drives timers
             exercises = exerciseList
-            workoutStartedFromWatch = true
             isWorkoutActive = true
             
         case .stop:
@@ -605,7 +598,6 @@ struct WorkoutView: View {
     var healthKitEnabled: Bool
     var activityType: WorkoutActivityOption
 #endif
-    var initiallyWatchDriven: Bool = false
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
@@ -623,7 +615,6 @@ struct WorkoutView: View {
     @State private var isCompleted = false
     @State private var isExiting = false
     @State private var pausedTimeRemaining: TimeInterval? = nil
-    @State private var isWatchDriven = false  // Track if watch is controlling the workout
     
     @State private var undoAction: WorkoutUndoAction? = nil
     @State private var showUndoToast = false
@@ -779,7 +770,7 @@ struct WorkoutView: View {
 #if canImport(HealthKit) && canImport(UIKit)
                 // HealthKit Metrics Display
                 // Show when iPhone session is active, or when watch is forwarding data
-                if healthKitEnabled && (healthKitManager.isWorkoutActive || isWatchDriven) {
+                if healthKitEnabled && healthKitManager.isWorkoutActive {
                     healthKitMetricsView
                         .padding(.horizontal)
                 }
@@ -823,43 +814,21 @@ struct WorkoutView: View {
             if !isExiting && !isCompleted && !showingCompletion && !isPaused && (currentExercise.isTimeBased || isResting) {
                 let now = Date()
                 timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
-                // Advance the workout when the phase timer expires, regardless of
-                // who started the workout. When watch-driven, sendStateToWatch() is
-                // a no-op so no conflicting commands are sent back to the watch.
                 if timeRemaining <= 0 {
                     timerExpired()
                 }
             }
         }
         .onAppear {
-            // If the watch started this workout, mark as watch-driven immediately
-            // so we don't send conflicting state updates back
-            if initiallyWatchDriven {
-                isWatchDriven = true
-            }
 #if canImport(UIKit)
             configureAudioSession()
             if enableBackgroundAudio {
                 startBackgroundAudioLoop()
             }
 #endif
-#if canImport(HealthKit)
-            // Only start a local HealthKit session if iPhone is driving the workout.
-            // When watch is driving, it owns the HealthKit session and will forward data.
-            if healthKitEnabled && !isWatchDriven {
-                Task {
-                    await healthKitManager.requestAuthorization()
-                    if healthKitManager.isAuthorized {
-                        let config = HealthKitWorkoutManager.workoutConfiguration(for: activityType.rawValue)
-                        await healthKitManager.startWorkoutSession(with: config)
-                    }
-                }
-            }
-#endif
+            // iPhone always drives timers — watch owns HealthKit session
             requestNotificationPermission()
-            if !isWatchDriven {
-                startCurrentPhase()
-            }
+            startCurrentPhase()
 #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
@@ -870,14 +839,6 @@ struct WorkoutView: View {
                 showingCompletion = false
 #if canImport(UIKit)
                 UIApplication.shared.isIdleTimerDisabled = false
-#endif
-#if canImport(HealthKit)
-                // End HealthKit workout session only if iPhone owns it
-                if healthKitEnabled && !isWatchDriven && healthKitManager.isWorkoutActive {
-                    Task {
-                        await healthKitManager.endWorkout()
-                    }
-                }
 #endif
                 DispatchQueue.main.async {
                     isActive = false
@@ -919,14 +880,8 @@ struct WorkoutView: View {
             stopBackgroundAudioLoop()
 #endif
 #if canImport(HealthKit)
-            // End HealthKit workout session only if iPhone owns it (not watch-driven)
-            if healthKitEnabled && !isWatchDriven && healthKitManager.isWorkoutActive {
-                Task {
-                    await healthKitManager.endWorkout()
-                }
-            }
-            // Reset forwarded health data when watch-driven workout ends
-            if isWatchDriven {
+            // Reset forwarded health data from watch
+            if healthKitEnabled {
                 healthKitManager.heartRate = 0
                 healthKitManager.activeCalories = 0
                 healthKitManager.isWorkoutActive = false
@@ -963,9 +918,6 @@ struct WorkoutView: View {
     
 #if canImport(WatchConnectivity)
     private func sendStateToWatch() {
-        // Don't send updates if watch is driving the workout
-        guard !isWatchDriven else { return }
-        
         let command = WorkoutCommand.updatePhase(
             exerciseIndex: currentExerciseIndex,
             set: currentSet,
@@ -986,32 +938,21 @@ struct WorkoutView: View {
             // Watch started the workout, already handled in ExerciseListView
             break
             
-        case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
-            // Watch is controlling the workout, sync state
-            isWatchDriven = true
-            currentExerciseIndex = exerciseIndex
-            currentSet = set
-            isResting = resting
-            isPaused = paused
-            isCompleted = completed
-            
-            if let endDate {
-                phaseEndDate = endDate
-                timeRemaining = max(0, endDate.timeIntervalSinceNow)
-            }
-            
-            if completed {
-                showingCompletion = true
-            }
+        case .updatePhase:
+            // iPhone is the timer authority — ignore any updatePhase from watch
+            break
             
         case .pause:
+            // Watch user tapped pause — pause and send authoritative state back
             let remaining = max(0, phaseEndDate.timeIntervalSinceNow)
             pausedTimeRemaining = remaining
             timeRemaining = remaining
             isPaused = true
             cancelPhaseEndNotification()
+            sendStateToWatch()
             
         case .resume:
+            // Watch user tapped resume — resume and send authoritative state back
             if let remaining = pausedTimeRemaining {
                 phaseEndDate = Date().addingTimeInterval(remaining)
                 timeRemaining = remaining
@@ -1019,9 +960,14 @@ struct WorkoutView: View {
                 schedulePhaseEndNotification(in: remaining)
             }
             isPaused = false
+            sendStateToWatch()
             
         case .stop:
             beginExit()
+            
+        case .repsComplete:
+            // Watch user tapped "Reps Complete" — advance and send state back
+            repsCompleteTapped()
             
         case .healthData(let heartRate, let activeCalories):
             // Receive live health data forwarded from the watch
@@ -1050,14 +996,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendWorkoutCommand(.stop)
 #endif
-#if canImport(HealthKit)
-        // End HealthKit workout session only if iPhone owns it
-        if healthKitEnabled && !isWatchDriven && healthKitManager.isWorkoutActive {
-            Task {
-                await healthKitManager.endWorkout()
-            }
-        }
-#endif
+        // Watch owns HealthKit session — it will end when it receives .stop
         if audioEngine.isRunning { audioEngine.stop() }
 #if canImport(UIKit)
         UIApplication.shared.isIdleTimerDisabled = false

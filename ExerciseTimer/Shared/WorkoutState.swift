@@ -1,6 +1,7 @@
 import Foundation
 
-/// Commands sent from iOS to watchOS to control workout display
+/// Commands sent between iOS and watchOS to control workout state.
+/// iPhone is always the timer authority; watch sends action commands back.
 enum WorkoutCommand: Codable, Equatable {
     case start(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?)
     case updatePhase(exerciseIndex: Int, set: Int, isResting: Bool, isPaused: Bool,
@@ -9,6 +10,8 @@ enum WorkoutCommand: Codable, Equatable {
     case resume
     case stop
     case healthData(heartRate: Double, activeCalories: Double)
+    /// Sent from watch to iPhone when user completes a rep-based set
+    case repsComplete
 }
 
 /// Keys for WatchConnectivity message/context dictionaries

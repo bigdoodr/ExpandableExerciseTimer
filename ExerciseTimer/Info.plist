@@ -6,5 +6,9 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Exercise Timer reads heart rate and calorie data during workouts to display real-time metrics.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Exercise Timer saves your workout sessions to Apple Health so you can track your exercise history.</string>
 </dict>
 </plist>
