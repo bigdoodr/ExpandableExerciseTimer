@@ -618,6 +618,15 @@ struct WorkoutView: View {
     
     @State private var undoAction: WorkoutUndoAction? = nil
     @State private var showUndoToast = false
+    @State private var showCancelConfirmation = false
+    @State private var workoutStartDate: Date = .now
+    @State private var showRecap = false
+    @State private var recapDuration: TimeInterval = 0
+    @State private var recapExercisesCompleted = 0
+    @State private var recapSetsCompleted = 0
+    @State private var recapHeartRate: Double = 0
+    @State private var recapCalories: Double = 0
+    @State private var recapCompletedNaturally = false
     
     let audioEngine = AVAudioEngine()
 #if canImport(UIKit)
@@ -827,25 +836,20 @@ struct WorkoutView: View {
             }
 #endif
             // iPhone always drives timers — watch owns HealthKit session
+            workoutStartDate = Date()
             requestNotificationPermission()
             startCurrentPhase()
 #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
         }
-        .alert("Workout Complete!", isPresented: $showingCompletion) {
-            Button("Done") {
-                isExiting = true
+        .onChange(of: showingCompletion) { _, completed in
+            if completed {
+                // Natural workout completion — capture recap and show it
                 showingCompletion = false
-#if canImport(UIKit)
-                UIApplication.shared.isIdleTimerDisabled = false
-#endif
-                DispatchQueue.main.async {
-                    isActive = false
-                }
+                captureRecap(completedNaturally: true)
+                showRecap = true
             }
-        } message: {
-            Text("Great job! You've completed all exercises.")
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active && !isPaused {
@@ -914,6 +918,131 @@ struct WorkoutView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .alert("End Workout?", isPresented: $showCancelConfirmation) {
+            Button("End Workout", role: .destructive) {
+                captureRecap(completedNaturally: false)
+                beginExit()
+                showRecap = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to end this workout?")
+        }
+        .fullScreenCover(isPresented: $showRecap) {
+            recapView
+        }
+    }
+    
+    // MARK: - Recap View
+    
+    private var recapView: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Header
+                    VStack(spacing: 8) {
+                        Image(systemName: recapCompletedNaturally ? "checkmark.circle.fill" : "stop.circle.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(recapCompletedNaturally ? .green : .orange)
+                        
+                        Text(recapCompletedNaturally ? "Workout Complete!" : "Workout Ended")
+                            .font(.title)
+                            .bold()
+                    }
+                    .padding(.top)
+                    
+                    // Stats
+                    VStack(spacing: 16) {
+                        recapRow(icon: "clock", color: .blue, label: "Duration", value: formatTime(recapDuration))
+                        
+                        Divider()
+                        
+                        recapRow(icon: "figure.strengthtraining.traditional", color: .green,
+                                 label: "Exercises", value: "\(recapExercisesCompleted) of \(exercises.count)")
+                        
+                        Divider()
+                        
+                        let totalSets = exercises.reduce(0) { $0 + $1.sets }
+                        recapRow(icon: "repeat", color: .purple,
+                                 label: "Sets", value: "\(recapSetsCompleted) of \(totalSets)")
+                        
+#if canImport(HealthKit)
+                        if recapHeartRate > 0 {
+                            Divider()
+                            recapRow(icon: "heart.fill", color: .red,
+                                     label: "Heart Rate", value: "\(Int(recapHeartRate)) BPM")
+                        }
+                        
+                        if recapCalories > 0 {
+                            Divider()
+                            recapRow(icon: "flame.fill", color: .orange,
+                                     label: "Calories", value: "\(Int(recapCalories)) CAL")
+                        }
+#endif
+                    }
+                    .padding()
+#if canImport(UIKit)
+                    .background(Color(uiColor: .systemGray6))
+#endif
+                    .cornerRadius(16)
+                    .padding(.horizontal)
+                    
+                    Button(action: {
+                        showRecap = false
+                        isActive = false
+                    }) {
+                        Text("Done")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.green)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.bottom)
+            }
+            .navigationTitle("Summary")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    
+    private func recapRow(icon: String, color: Color, label: String, value: String) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 28)
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .bold()
+        }
+    }
+    
+    private func captureRecap(completedNaturally: Bool) {
+        recapDuration = Date().timeIntervalSince(workoutStartDate)
+        recapCompletedNaturally = completedNaturally
+        
+        if completedNaturally {
+            recapExercisesCompleted = exercises.count
+            recapSetsCompleted = exercises.reduce(0) { $0 + $1.sets }
+        } else {
+            recapExercisesCompleted = min(currentExerciseIndex + 1, exercises.count)
+            // Count sets completed in finished exercises + current exercise
+            var sets = 0
+            for i in 0..<currentExerciseIndex {
+                sets += exercises[i].sets
+            }
+            sets += max(0, currentSet - (isResting ? 0 : 1))
+            recapSetsCompleted = sets
+        }
+        
+#if canImport(HealthKit)
+        recapHeartRate = healthKitManager.heartRate
+        recapCalories = healthKitManager.activeCalories
+#endif
     }
     
 #if canImport(WatchConnectivity)
@@ -963,7 +1092,10 @@ struct WorkoutView: View {
             sendStateToWatch()
             
         case .stop:
+            // Watch ended the workout — show recap
+            captureRecap(completedNaturally: false)
             beginExit()
+            showRecap = true
             
         case .repsComplete:
             // Watch user tapped "Reps Complete" — advance and send state back
@@ -1001,10 +1133,7 @@ struct WorkoutView: View {
 #if canImport(UIKit)
         UIApplication.shared.isIdleTimerDisabled = false
 #endif
-        // Flip navigation on next runloop tick
-        DispatchQueue.main.async {
-            isActive = false
-        }
+        // Navigation back to builder is handled by the recap view's "Done" button
     }
     
     func startCurrentPhase() {
@@ -1370,7 +1499,7 @@ struct WorkoutView: View {
     }
 
     private var cancelButton: some View {
-        Button(action: { beginExit() }) {
+        Button(action: { showCancelConfirmation = true }) {
             HStack {
                 Image(systemName: "xmark.circle.fill")
                 Text("Cancel")

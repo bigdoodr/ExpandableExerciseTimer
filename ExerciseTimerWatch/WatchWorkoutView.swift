@@ -1,5 +1,6 @@
 import SwiftUI
 import HealthKit
+import WatchKit
 internal import Combine
 
 struct WatchWorkoutView: View {
@@ -10,11 +11,21 @@ struct WatchWorkoutView: View {
     
     /// Tracks when we last sent health data to throttle updates
     @State private var lastHealthDataSend: Date = .distantPast
+    /// Confirmation before ending workout
+    @State private var showEndConfirmation = false
+    /// Workout start time for duration calculation
+    @State private var workoutStartDate: Date = .now
+    /// Show recap screen after workout ends
+    @State private var showRecap = false
+    /// Captured recap data
+    @State private var recapData: WorkoutRecap?
     
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     
     var body: some View {
-        if engine.isWorkoutRunning && !engine.exercises.isEmpty {
+        if let recap = recapData, showRecap {
+            watchRecapView(recap)
+        } else if engine.isWorkoutRunning && !engine.exercises.isEmpty {
             activeWorkoutView
         } else {
             waitingView
@@ -55,9 +66,6 @@ struct WatchWorkoutView: View {
             handleCommand(command)
         }
         .onChange(of: scenePhase) { _, newPhase in
-            // On wrist-raise, only replay a pending .start command so a workout initiated
-            // on iPhone while the watch display was off is picked up correctly.
-            // Replaying other commands (especially .stop) could kill an active workout.
             if newPhase == .active, let cmd = connectivity.receivedCommand,
                case .start = cmd {
                 handleCommand(cmd)
@@ -110,9 +118,7 @@ struct WatchWorkoutView: View {
                         .foregroundStyle(.blue)
                     
                     Button(action: {
-                        // Haptic feedback immediately for responsiveness
                         WKInterfaceDevice.current().play(.click)
-                        // Send command to iPhone — it will advance and send back updatePhase
                         connectivity.sendWorkoutCommand(.repsComplete)
                     }) {
                         Text("Reps Complete")
@@ -209,12 +215,10 @@ struct WatchWorkoutView: View {
                     Divider()
                         .padding(.vertical, 4)
                     
-                    // Pause/Resume — optimistic UI + send command to iPhone
+                    // Pause/Resume
                     Button(action: {
                         let willPause = !engine.isPaused
-                        // Optimistic UI update for instant feedback
                         engine.isPaused = willPause
-                        // Sync HealthKit session
                         if healthKit.isWorkoutActive {
                             if willPause {
                                 healthKit.pauseWorkout()
@@ -222,7 +226,6 @@ struct WatchWorkoutView: View {
                                 healthKit.resumeWorkout()
                             }
                         }
-                        // Send command to iPhone — it will handle timing and send back updatePhase
                         connectivity.sendWorkoutCommand(willPause ? .pause : .resume)
                     }) {
                         HStack {
@@ -233,8 +236,8 @@ struct WatchWorkoutView: View {
                         .foregroundStyle(.orange)
                     }
                     
-                    // End workout
-                    Button(action: endWorkout) {
+                    // End workout — shows confirmation first
+                    Button(action: { showEndConfirmation = true }) {
                         HStack {
                             Image(systemName: "stop.fill")
                             Text("End Workout")
@@ -243,13 +246,16 @@ struct WatchWorkoutView: View {
                         .foregroundStyle(.red)
                     }
                 }
+                
+                // Bottom padding to prevent Digital Crown overscroll from
+                // triggering the End Workout button
+                Spacer()
+                    .frame(height: 60)
             }
             .padding()
         }
         .onReceive(timer) { _ in
             engine.tickTimer()
-            // Forward HealthKit data to iPhone since the watch has the sensors.
-            // Throttled to every 2 seconds to avoid congestion.
             if healthKit.isWorkoutActive,
                Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
                 connectivity.sendWorkoutCommand(
@@ -267,6 +273,107 @@ struct WatchWorkoutView: View {
                 engine.recalculateOnWake()
             }
         }
+        .alert("End Workout?", isPresented: $showEndConfirmation) {
+            Button("End", role: .destructive) {
+                endWorkoutWithRecap(completedNaturally: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to end this workout?")
+        }
+    }
+    
+    // MARK: - Recap View
+    
+    private func watchRecapView(_ recap: WorkoutRecap) -> some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                Image(systemName: recap.completedNaturally ? "checkmark.circle.fill" : "stop.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(recap.completedNaturally ? .green : .orange)
+                
+                Text(recap.completedNaturally ? "Workout Complete!" : "Workout Ended")
+                    .font(.headline)
+                
+                Divider()
+                    .padding(.vertical, 4)
+                
+                // Duration
+                HStack {
+                    Image(systemName: "clock")
+                        .foregroundStyle(.blue)
+                    Text("Duration")
+                        .font(.caption)
+                    Spacer()
+                    Text(engine.formatTime(recap.duration))
+                        .font(.caption)
+                        .bold()
+                }
+                
+                // Exercises
+                HStack {
+                    Image(systemName: "figure.strengthtraining.traditional")
+                        .foregroundStyle(.green)
+                    Text("Exercises")
+                        .font(.caption)
+                    Spacer()
+                    Text("\(recap.exercisesCompleted)/\(recap.totalExercises)")
+                        .font(.caption)
+                        .bold()
+                }
+                
+                // Sets
+                HStack {
+                    Image(systemName: "repeat")
+                        .foregroundStyle(.purple)
+                    Text("Sets")
+                        .font(.caption)
+                    Spacer()
+                    Text("\(recap.setsCompleted)/\(recap.totalSets)")
+                        .font(.caption)
+                        .bold()
+                }
+                
+                // Heart Rate (if available)
+                if recap.heartRate > 0 {
+                    HStack {
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(.red)
+                        Text("Heart Rate")
+                            .font(.caption)
+                        Spacer()
+                        Text("\(Int(recap.heartRate)) BPM")
+                            .font(.caption)
+                            .bold()
+                    }
+                }
+                
+                // Calories (if available)
+                if recap.calories > 0 {
+                    HStack {
+                        Image(systemName: "flame.fill")
+                            .foregroundStyle(.orange)
+                        Text("Calories")
+                            .font(.caption)
+                        Spacer()
+                        Text("\(Int(recap.calories)) CAL")
+                            .font(.caption)
+                            .bold()
+                    }
+                }
+                
+                Divider()
+                    .padding(.vertical, 4)
+                
+                Button(action: dismissRecap) {
+                    Text("Done")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding()
+        }
     }
     
     // MARK: - Computed Properties
@@ -283,37 +390,70 @@ struct WatchWorkoutView: View {
         let hkEnabled = connectivity.receivedHealthKitEnabled
         let actType = connectivity.receivedActivityType
         
-        // Notify iPhone to start the workout (iPhone drives timers)
         connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType))
-        
-        // Show workout UI immediately (optimistic); iPhone will send updatePhase with timing
         engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
+        workoutStartDate = Date()
         
-        // Watch always owns the HealthKit session
         if hkEnabled {
             Task {
                 await healthKit.requestAuthorization()
-                
                 if !healthKit.isAuthorized {
                     healthKit.startError = "HealthKit permission not granted. Please enable in Settings > Privacy & Security > Health."
                     return
                 }
-                
                 let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
                 await healthKit.startWorkoutSession(with: config)
             }
         }
     }
     
-    private func endWorkout() {
-        engine.stopWorkout()
-        
-        // Notify iPhone that workout ended
-        connectivity.sendWorkoutCommand(.stop)
-        
-        Task {
-            await healthKit.endWorkout()
+    private func endWorkoutWithRecap(completedNaturally: Bool) {
+        // Capture recap data before resetting state
+        let duration = Date().timeIntervalSince(workoutStartDate)
+        let exercisesCompleted: Int
+        if completedNaturally {
+            exercisesCompleted = engine.exercises.count
+        } else {
+            exercisesCompleted = min(engine.currentExerciseIndex + 1, engine.exercises.count)
         }
+        let setsCompleted = computeSetsCompleted(completedNaturally: completedNaturally)
+        let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
+        
+        recapData = WorkoutRecap(
+            duration: duration,
+            exercisesCompleted: exercisesCompleted,
+            totalExercises: engine.exercises.count,
+            setsCompleted: setsCompleted,
+            totalSets: totalSets,
+            heartRate: healthKit.heartRate,
+            calories: healthKit.activeCalories,
+            completedNaturally: completedNaturally
+        )
+        
+        engine.stopWorkout()
+        connectivity.sendWorkoutCommand(.stop)
+        Task { await healthKit.endWorkout() }
+        
+        showRecap = true
+    }
+    
+    private func dismissRecap() {
+        showRecap = false
+        recapData = nil
+        engine.isWorkoutRunning = false
+    }
+    
+    private func computeSetsCompleted(completedNaturally: Bool) -> Int {
+        if completedNaturally {
+            return engine.exercises.reduce(0) { $0 + $1.sets }
+        }
+        var total = 0
+        for i in 0..<engine.currentExerciseIndex {
+            total += engine.exercises[i].sets
+        }
+        // Add sets completed in the current exercise
+        total += max(0, engine.currentSet - (engine.isResting ? 0 : 1))
+        return total
     }
     
     // MARK: - Command Handling
@@ -323,60 +463,91 @@ struct WatchWorkoutView: View {
         
         switch command {
         case .start(let exerciseList, let hkEnabled, let actType):
-            // iPhone started the workout — set up display and start HealthKit
             engine.startWorkout(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
+            workoutStartDate = Date()
             
             if hkEnabled {
                 Task {
                     await healthKit.requestAuthorization()
-                    
                     if !healthKit.isAuthorized {
                         healthKit.startError = "HealthKit permission not granted. Please enable in Settings > Privacy & Security > Health."
                         return
                     }
-                    
                     let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
                     await healthKit.startWorkoutSession(with: config)
                 }
             }
             
         case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
-            // iPhone is the timer authority — always accept state updates
             engine.applyUpdate(
                 exerciseIndex: exerciseIndex, set: set, isResting: resting,
                 isPaused: paused, phaseEndDate: endDate, isCompleted: completed
             )
             if completed {
+                // Natural completion — show recap after a brief delay
                 Task {
                     await healthKit.endWorkout()
-                    try? await Task.sleep(for: .seconds(5))
-                    engine.isWorkoutRunning = false
+                    let duration = Date().timeIntervalSince(workoutStartDate)
+                    let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
+                    await MainActor.run {
+                        recapData = WorkoutRecap(
+                            duration: duration,
+                            exercisesCompleted: engine.exercises.count,
+                            totalExercises: engine.exercises.count,
+                            setsCompleted: totalSets,
+                            totalSets: totalSets,
+                            heartRate: healthKit.heartRate,
+                            calories: healthKit.activeCalories,
+                            completedNaturally: true
+                        )
+                        showRecap = true
+                    }
                 }
             }
             
         case .pause:
             engine.isPaused = true
-            if healthKit.isWorkoutActive {
-                healthKit.pauseWorkout()
-            }
+            if healthKit.isWorkoutActive { healthKit.pauseWorkout() }
             
         case .resume:
             engine.isPaused = false
-            if healthKit.isWorkoutActive {
-                healthKit.resumeWorkout()
-            }
+            if healthKit.isWorkoutActive { healthKit.resumeWorkout() }
             
         case .stop:
+            // iPhone ended the workout — show recap
+            let duration = Date().timeIntervalSince(workoutStartDate)
+            let exercisesCompleted = min(engine.currentExerciseIndex + 1, engine.exercises.count)
+            let setsCompleted = computeSetsCompleted(completedNaturally: false)
+            let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
+            recapData = WorkoutRecap(
+                duration: duration,
+                exercisesCompleted: exercisesCompleted,
+                totalExercises: engine.exercises.count,
+                setsCompleted: setsCompleted,
+                totalSets: totalSets,
+                heartRate: healthKit.heartRate,
+                calories: healthKit.activeCalories,
+                completedNaturally: false
+            )
             engine.stopWorkout()
             Task { await healthKit.endWorkout() }
+            showRecap = true
             
-        case .healthData:
-            // Health data is sent from watch to iPhone; ignore if received on watch
-            break
-            
-        case .repsComplete:
-            // Reps complete is sent from watch to iPhone; ignore if received on watch
+        case .healthData, .repsComplete:
             break
         }
     }
+}
+
+// MARK: - Recap Data
+
+struct WorkoutRecap {
+    let duration: TimeInterval
+    let exercisesCompleted: Int
+    let totalExercises: Int
+    let setsCompleted: Int
+    let totalSets: Int
+    let heartRate: Double
+    let calories: Double
+    let completedNaturally: Bool
 }
