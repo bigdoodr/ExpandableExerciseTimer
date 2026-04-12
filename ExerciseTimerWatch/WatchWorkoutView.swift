@@ -23,12 +23,22 @@ struct WatchWorkoutView: View {
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     
     var body: some View {
-        if let recap = recapData, showRecap {
-            watchRecapView(recap)
-        } else if engine.isWorkoutRunning && !engine.exercises.isEmpty {
-            activeWorkoutView
-        } else {
-            waitingView
+        Group {
+            if let recap = recapData, showRecap {
+                watchRecapView(recap)
+            } else if engine.isWorkoutRunning && !engine.exercises.isEmpty {
+                activeWorkoutView
+            } else {
+                waitingView
+            }
+        }
+        .alert("End Workout?", isPresented: $showEndConfirmation) {
+            Button("End", role: .destructive) {
+                endWorkoutWithRecap(completedNaturally: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to end this workout?")
         }
     }
     
@@ -272,14 +282,6 @@ struct WatchWorkoutView: View {
             if newPhase == .active {
                 engine.recalculateOnWake()
             }
-        }
-        .alert("End Workout?", isPresented: $showEndConfirmation) {
-            Button("End", role: .destructive) {
-                endWorkoutWithRecap(completedNaturally: false)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Are you sure you want to end this workout?")
         }
     }
     

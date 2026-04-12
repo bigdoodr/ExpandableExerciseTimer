@@ -343,12 +343,8 @@ struct ExerciseListView: View {
             exercises = exerciseList
             isWorkoutActive = true
             
-        case .stop:
-            // Watch ended workout, end on iPhone
-            isWorkoutActive = false
-            
         default:
-            // Other commands (updatePhase, pause, resume) are handled by WorkoutView
+            // Other commands (stop, updatePhase, pause, resume) are handled by WorkoutView
             break
         }
     }
@@ -611,7 +607,6 @@ struct WorkoutView: View {
     @State private var isPaused = false
     @State private var timeRemaining: TimeInterval = 0
     @State private var phaseEndDate: Date = .now
-    @State private var showingCompletion = false
     @State private var isCompleted = false
     @State private var isExiting = false
     @State private var pausedTimeRemaining: TimeInterval? = nil
@@ -700,6 +695,26 @@ struct WorkoutView: View {
     }
     
     var body: some View {
+        Group {
+            if showRecap {
+                recapView
+            } else {
+                workoutContent
+            }
+        }
+        .alert("End Workout?", isPresented: $showCancelConfirmation) {
+            Button("End Workout", role: .destructive) {
+                captureRecap(completedNaturally: false)
+                beginExit()
+                showRecap = true
+            }
+            Button("Keep Going", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to end this workout?")
+        }
+    }
+
+    private var workoutContent: some View {
         ScrollView {
             VStack(spacing: 30) {
                 VStack(spacing: 8) {
@@ -820,7 +835,7 @@ struct WorkoutView: View {
             .padding(.top)
         }
         .onReceive(timer) { _ in
-            if !isExiting && !isCompleted && !showingCompletion && !isPaused && (currentExercise.isTimeBased || isResting) {
+            if !isExiting && !isCompleted && !showRecap && !isPaused && (currentExercise.isTimeBased || isResting) {
                 let now = Date()
                 timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
                 if timeRemaining <= 0 {
@@ -842,14 +857,6 @@ struct WorkoutView: View {
 #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
 #endif
-        }
-        .onChange(of: showingCompletion) { _, completed in
-            if completed {
-                // Natural workout completion — capture recap and show it
-                showingCompletion = false
-                captureRecap(completedNaturally: true)
-                showRecap = true
-            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active && !isPaused {
@@ -917,19 +924,6 @@ struct WorkoutView: View {
                 .padding(.horizontal)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-        }
-        .alert("End Workout?", isPresented: $showCancelConfirmation) {
-            Button("End Workout", role: .destructive) {
-                captureRecap(completedNaturally: false)
-                beginExit()
-                showRecap = true
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Are you sure you want to end this workout?")
-        }
-        .fullScreenCover(isPresented: $showRecap) {
-            recapView
         }
     }
     
@@ -1119,7 +1113,7 @@ struct WorkoutView: View {
         isPaused = true
         isCompleted = true
         isResting = false
-        showingCompletion = false
+
         // Stop notifications and audio synchronously
         cancelPhaseEndNotification()
 #if canImport(UIKit)
@@ -1174,10 +1168,11 @@ struct WorkoutView: View {
                 if currentExerciseIndex >= exercises.count {
                     isCompleted = true
                     timeRemaining = 0
-                    showingCompletion = true
 #if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
+                    captureRecap(completedNaturally: true)
+                    showRecap = true
                     return
                 }
                 // Start next exercise phase
@@ -1212,10 +1207,11 @@ struct WorkoutView: View {
                     if currentExerciseIndex >= exercises.count {
                         isCompleted = true
                         timeRemaining = 0
-                        showingCompletion = true
 #if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
+                        captureRecap(completedNaturally: true)
+                        showRecap = true
                         return
                     }
                     // Start next exercise phase (exercise or rep-based)
@@ -1255,7 +1251,11 @@ struct WorkoutView: View {
                     if currentExerciseIndex >= exercises.count {
                         isCompleted = true
                         timeRemaining = 0
-                        showingCompletion = true
+#if canImport(WatchConnectivity)
+                        sendStateToWatch()
+#endif
+                        captureRecap(completedNaturally: true)
+                        showRecap = true
                         return
                     }
                     if exercises[currentExerciseIndex].isTimeBased {
@@ -1285,7 +1285,11 @@ struct WorkoutView: View {
                 if currentExerciseIndex >= exercises.count {
                     isCompleted = true
                     timeRemaining = 0
-                    showingCompletion = true
+#if canImport(WatchConnectivity)
+                    sendStateToWatch()
+#endif
+                    captureRecap(completedNaturally: true)
+                    showRecap = true
                     return
                 }
                 if exercises[currentExerciseIndex].isTimeBased {
@@ -1331,7 +1335,7 @@ struct WorkoutView: View {
         currentSet = action.setBefore
         isResting = false
         isCompleted = false
-        showingCompletion = false
+
         // For rep-based, return to pre-rest state (no active timer)
         timeRemaining = 0
         // Clear undo and hide toast
