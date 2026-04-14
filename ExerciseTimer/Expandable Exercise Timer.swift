@@ -1171,6 +1171,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
+                    playCompletionSound()
                     captureRecap(completedNaturally: true)
                     showRecap = true
                     return
@@ -1210,7 +1211,8 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
-                        captureRecap(completedNaturally: true)
+                        playCompletionSound()
+                    captureRecap(completedNaturally: true)
                         showRecap = true
                         return
                     }
@@ -1254,7 +1256,8 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
-                        captureRecap(completedNaturally: true)
+                        playCompletionSound()
+                    captureRecap(completedNaturally: true)
                         showRecap = true
                         return
                     }
@@ -1288,6 +1291,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
+                    playCompletionSound()
                     captureRecap(completedNaturally: true)
                     showRecap = true
                     return
@@ -1610,6 +1614,58 @@ struct WorkoutView: View {
         }
     }
     
+    /// Plays a rising three-tone celebration sound for workout completion.
+    func playCompletionSound() {
+        let sampleRate: Float = 44100
+        let format = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1)!
+        // Three ascending tones: C6, E6, G6 — each ~0.15s with brief gaps
+        let toneLength = Int(sampleRate * 0.15)
+        let gapLength = Int(sampleRate * 0.05)
+        let totalFrames = toneLength * 3 + gapLength * 2
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalFrames))!
+        buffer.frameLength = AVAudioFrameCount(totalFrames)
+
+        let channels = UnsafeBufferPointer(start: buffer.floatChannelData, count: Int(format.channelCount))
+        let samples = UnsafeMutableBufferPointer(start: channels[0], count: totalFrames)
+
+        let frequencies: [Float] = [1047.0, 1319.0, 1568.0] // C6, E6, G6
+        let amplitude: Float = 0.35
+        var offset = 0
+        for (noteIndex, freq) in frequencies.enumerated() {
+            for i in 0..<toneLength {
+                let envelope: Float = min(1.0, min(Float(i) / 200, Float(toneLength - i) / 200))
+                let phase = Float(i) * freq / sampleRate
+                samples[offset + i] = sin(phase * 2 * .pi) * amplitude * envelope
+            }
+            offset += toneLength
+            if noteIndex < 2 {
+                for i in 0..<gapLength {
+                    samples[offset + i] = 0
+                }
+                offset += gapLength
+            }
+        }
+
+        let playerNode = AVAudioPlayerNode()
+        audioEngine.attach(playerNode)
+        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
+
+        if !audioEngine.isRunning {
+            do {
+                try audioEngine.start()
+            } catch {
+                print("Audio engine start failed: \(error)")
+                return
+            }
+        }
+        playerNode.play()
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                playerNode.stop()
+            }
+        }
+    }
+
     func playSound() {
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 22050)!
