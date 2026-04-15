@@ -622,6 +622,7 @@ struct WorkoutView: View {
     @State private var recapHeartRate: Double = 0
     @State private var recapCalories: Double = 0
     @State private var recapCompletedNaturally = false
+    @State private var heartRateReadings: [Double] = []
     
     let audioEngine = AVAudioEngine()
 #if canImport(UIKit)
@@ -964,7 +965,7 @@ struct WorkoutView: View {
                         if recapHeartRate > 0 {
                             Divider()
                             recapRow(icon: "heart.fill", color: .red,
-                                     label: "Heart Rate", value: "\(Int(recapHeartRate)) BPM")
+                                     label: "Avg Heart Rate", value: "\(Int(recapHeartRate)) BPM")
                         }
                         
                         if recapCalories > 0 {
@@ -999,6 +1000,11 @@ struct WorkoutView: View {
             }
             .navigationTitle("Summary")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if recapCompletedNaturally {
+                    playCompletionSound()
+                }
+            }
         }
     }
     
@@ -1034,7 +1040,12 @@ struct WorkoutView: View {
         }
         
 #if canImport(HealthKit)
-        recapHeartRate = healthKitManager.heartRate
+        // Use average heart rate over the workout, falling back to last reading
+        if !heartRateReadings.isEmpty {
+            recapHeartRate = heartRateReadings.reduce(0, +) / Double(heartRateReadings.count)
+        } else {
+            recapHeartRate = healthKitManager.heartRate
+        }
         recapCalories = healthKitManager.activeCalories
 #endif
     }
@@ -1099,6 +1110,10 @@ struct WorkoutView: View {
             // Receive live health data forwarded from the watch
             healthKitManager.heartRate = heartRate
             healthKitManager.activeCalories = activeCalories
+            // Accumulate for average calculation in recap
+            if heartRate > 0 {
+                heartRateReadings.append(heartRate)
+            }
             // Mark as active so the metrics view shows
             if !healthKitManager.isWorkoutActive {
                 healthKitManager.isWorkoutActive = true
@@ -1171,7 +1186,6 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
-                    playCompletionSound()
                     captureRecap(completedNaturally: true)
                     showRecap = true
                     return
@@ -1211,8 +1225,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
-                        playCompletionSound()
-                    captureRecap(completedNaturally: true)
+                        captureRecap(completedNaturally: true)
                         showRecap = true
                         return
                     }
@@ -1256,8 +1269,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                         sendStateToWatch()
 #endif
-                        playCompletionSound()
-                    captureRecap(completedNaturally: true)
+                        captureRecap(completedNaturally: true)
                         showRecap = true
                         return
                     }
@@ -1291,7 +1303,6 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
                     sendStateToWatch()
 #endif
-                    playCompletionSound()
                     captureRecap(completedNaturally: true)
                     showRecap = true
                     return

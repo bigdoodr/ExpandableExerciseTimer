@@ -19,6 +19,8 @@ struct WatchWorkoutView: View {
     @State private var showRecap = false
     /// Captured recap data
     @State private var recapData: WorkoutRecap?
+    /// Accumulated heart rate readings for average calculation
+    @State private var heartRateReadings: [Double] = []
     
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     
@@ -268,10 +270,15 @@ struct WatchWorkoutView: View {
             engine.tickTimer()
             if healthKit.isWorkoutActive,
                Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
+                let hr = healthKit.heartRate
                 connectivity.sendWorkoutCommand(
-                    .healthData(heartRate: healthKit.heartRate,
+                    .healthData(heartRate: hr,
                                 activeCalories: healthKit.activeCalories)
                 )
+                // Accumulate for average calculation in recap
+                if hr > 0 {
+                    heartRateReadings.append(hr)
+                }
                 lastHealthDataSend = Date()
             }
         }
@@ -336,12 +343,12 @@ struct WatchWorkoutView: View {
                         .bold()
                 }
                 
-                // Heart Rate (if available)
+                // Average Heart Rate (if available)
                 if recap.heartRate > 0 {
                     HStack {
                         Image(systemName: "heart.fill")
                             .foregroundStyle(.red)
-                        Text("Heart Rate")
+                        Text("Avg HR")
                             .font(.caption)
                         Spacer()
                         Text("\(Int(recap.heartRate)) BPM")
@@ -380,6 +387,11 @@ struct WatchWorkoutView: View {
     
     // MARK: - Computed Properties
     
+    private var averageHeartRate: Double {
+        guard !heartRateReadings.isEmpty else { return healthKit.heartRate }
+        return heartRateReadings.reduce(0, +) / Double(heartRateReadings.count)
+    }
+
     private var currentExerciseName: String {
         guard let exercise = engine.currentExercise else { return "Exercise" }
         return exercise.name.isEmpty ? "Exercise \(engine.displayExerciseNumber)" : exercise.name
@@ -427,7 +439,7 @@ struct WatchWorkoutView: View {
             totalExercises: engine.exercises.count,
             setsCompleted: setsCompleted,
             totalSets: totalSets,
-            heartRate: healthKit.heartRate,
+            heartRate: averageHeartRate,
             calories: healthKit.activeCalories,
             completedNaturally: completedNaturally
         )
@@ -498,7 +510,7 @@ struct WatchWorkoutView: View {
                             totalExercises: engine.exercises.count,
                             setsCompleted: totalSets,
                             totalSets: totalSets,
-                            heartRate: healthKit.heartRate,
+                            heartRate: averageHeartRate,
                             calories: healthKit.activeCalories,
                             completedNaturally: true
                         )
@@ -527,7 +539,7 @@ struct WatchWorkoutView: View {
                 totalExercises: engine.exercises.count,
                 setsCompleted: setsCompleted,
                 totalSets: totalSets,
-                heartRate: healthKit.heartRate,
+                heartRate: averageHeartRate,
                 calories: healthKit.activeCalories,
                 completedNaturally: false
             )
