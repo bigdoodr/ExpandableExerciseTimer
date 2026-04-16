@@ -14,6 +14,9 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var startError: String?
     @Published var isAuthorized = false
 
+    /// Throttle for forwarding health data to iPhone via WatchConnectivity
+    private var lastHealthDataForward: Date = .distantPast
+
     private var workoutSession: HKWorkoutSession?
 
     // Stored as Any? so the stored property doesn't require @available
@@ -272,8 +275,24 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
                 default:
                     break
                 }
+                // Forward data to iPhone in the background (throttled to every 2s).
+                // This ensures metrics arrive even when the watch screen is off.
+                self.forwardHealthDataIfNeeded()
             }
         }
+    }
+}
+
+extension HealthKitWorkoutManager {
+    /// Forwards current health data to iPhone via WatchConnectivity, throttled to every 2 seconds.
+    func forwardHealthDataIfNeeded() {
+        guard isWorkoutActive else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastHealthDataForward) >= 2.0 else { return }
+        lastHealthDataForward = now
+        WatchConnectivityManager.shared.sendWorkoutCommand(
+            .healthData(heartRate: heartRate, activeCalories: activeCalories)
+        )
     }
 }
 #else

@@ -268,14 +268,12 @@ struct WatchWorkoutView: View {
         }
         .onReceive(timer) { _ in
             engine.tickTimer()
+            // Accumulate heart rate readings for average calculation in recap.
+            // Health data forwarding to iPhone is handled by HealthKitWorkoutManager
+            // directly from the HKLiveWorkoutBuilderDelegate (works even when screen is off).
             if healthKit.isWorkoutActive,
                Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
                 let hr = healthKit.heartRate
-                connectivity.sendWorkoutCommand(
-                    .healthData(heartRate: hr,
-                                activeCalories: healthKit.activeCalories)
-                )
-                // Accumulate for average calculation in recap
                 if hr > 0 {
                     heartRateReadings.append(hr)
                 }

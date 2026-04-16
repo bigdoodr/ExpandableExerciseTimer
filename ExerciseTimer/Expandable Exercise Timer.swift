@@ -625,6 +625,8 @@ struct WorkoutView: View {
     @State private var heartRateReadings: [Double] = []
     
     let audioEngine = AVAudioEngine()
+    /// Retained reference for completion sound so AVAudioPlayer isn't deallocated mid-play
+    @State private var completionSoundPlayer: AVAudioPlayer?
 #if canImport(UIKit)
     private let backgroundPlayerNode = AVAudioPlayerNode()
     @State private var isBackgroundLoopRunning = false
@@ -1626,54 +1628,60 @@ struct WorkoutView: View {
     }
     
     /// Plays a rising three-tone celebration sound for workout completion.
+    /// Uses AVAudioPlayer with an in-memory WAV so it's independent of the shared audioEngine.
     func playCompletionSound() {
-        let sampleRate: Float = 44100
-        let format = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1)!
-        // Three ascending tones: C6, E6, G6 — each ~0.15s with brief gaps
-        let toneLength = Int(sampleRate * 0.15)
-        let gapLength = Int(sampleRate * 0.05)
+        let sampleRate: Int = 44100
+        let bitsPerSample: Int = 16
+        let numChannels: Int = 1
+
+        // Three ascending tones: C6, E6, G6 — each ~0.18s with brief gaps
+        let toneLength = Int(Double(sampleRate) * 0.18)
+        let gapLength = Int(Double(sampleRate) * 0.04)
         let totalFrames = toneLength * 3 + gapLength * 2
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalFrames))!
-        buffer.frameLength = AVAudioFrameCount(totalFrames)
 
-        let channels = UnsafeBufferPointer(start: buffer.floatChannelData, count: Int(format.channelCount))
-        let samples = UnsafeMutableBufferPointer(start: channels[0], count: totalFrames)
-
-        let frequencies: [Float] = [1047.0, 1319.0, 1568.0] // C6, E6, G6
-        let amplitude: Float = 0.35
+        // Generate 16-bit PCM samples
+        let frequencies: [Double] = [1047.0, 1319.0, 1568.0]
+        let amplitude: Double = 0.4
+        var pcmData = [Int16](repeating: 0, count: totalFrames)
         var offset = 0
         for (noteIndex, freq) in frequencies.enumerated() {
             for i in 0..<toneLength {
-                let envelope: Float = min(1.0, min(Float(i) / 200, Float(toneLength - i) / 200))
-                let phase = Float(i) * freq / sampleRate
-                samples[offset + i] = sin(phase * 2 * .pi) * amplitude * envelope
+                let envelope = min(1.0, min(Double(i) / 300, Double(toneLength - i) / 300))
+                let phase = Double(i) * freq / Double(sampleRate)
+                pcmData[offset + i] = Int16(sin(phase * 2 * .pi) * amplitude * envelope * Double(Int16.max))
             }
             offset += toneLength
             if noteIndex < 2 {
-                for i in 0..<gapLength {
-                    samples[offset + i] = 0
-                }
-                offset += gapLength
+                offset += gapLength // already zeroed
             }
         }
 
-        let playerNode = AVAudioPlayerNode()
-        audioEngine.attach(playerNode)
-        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
+        // Build a minimal WAV file in memory
+        let dataSize = totalFrames * numChannels * (bitsPerSample / 8)
+        var wav = Data()
+        wav.append(contentsOf: "RIFF".utf8)
+        wav.append(withUnsafeBytes(of: UInt32(36 + dataSize).littleEndian) { Data($0) })
+        wav.append(contentsOf: "WAVE".utf8)
+        wav.append(contentsOf: "fmt ".utf8)
+        wav.append(withUnsafeBytes(of: UInt32(16).littleEndian) { Data($0) })       // chunk size
+        wav.append(withUnsafeBytes(of: UInt16(1).littleEndian) { Data($0) })        // PCM
+        wav.append(withUnsafeBytes(of: UInt16(numChannels).littleEndian) { Data($0) })
+        wav.append(withUnsafeBytes(of: UInt32(sampleRate).littleEndian) { Data($0) })
+        let byteRate = sampleRate * numChannels * (bitsPerSample / 8)
+        wav.append(withUnsafeBytes(of: UInt32(byteRate).littleEndian) { Data($0) })
+        let blockAlign = numChannels * (bitsPerSample / 8)
+        wav.append(withUnsafeBytes(of: UInt16(blockAlign).littleEndian) { Data($0) })
+        wav.append(withUnsafeBytes(of: UInt16(bitsPerSample).littleEndian) { Data($0) })
+        wav.append(contentsOf: "data".utf8)
+        wav.append(withUnsafeBytes(of: UInt32(dataSize).littleEndian) { Data($0) })
+        pcmData.withUnsafeBufferPointer { wav.append(UnsafeBufferPointer(start: UnsafeRawPointer($0.baseAddress!).assumingMemoryBound(to: UInt8.self), count: dataSize)) }
 
-        if !audioEngine.isRunning {
-            do {
-                try audioEngine.start()
-            } catch {
-                print("Audio engine start failed: \(error)")
-                return
-            }
-        }
-        playerNode.play()
-        playerNode.scheduleBuffer(buffer, at: nil, options: []) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                playerNode.stop()
-            }
+        do {
+            let player = try AVAudioPlayer(data: wav)
+            completionSoundPlayer = player  // retain
+            player.play()
+        } catch {
+            print("Completion sound failed: \(error)")
         }
     }
 
