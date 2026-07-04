@@ -35,3 +35,30 @@ enum WorkoutActivityOption: String, CaseIterable, Identifiable {
     
     var id: String { rawValue }
 }
+
+/// A named, saved collection of exercises
+struct Routine: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var name: String
+    var exercises: [Exercise]
+}
+
+/// Heart rate zone computed from BPM relative to estimated max heart rate
+struct HRZone {
+    let number: Int
+    let label: String
+    /// Primary fuel source burned at this intensity
+    let fuelType: String
+
+    static func zone(for heartRate: Double, maxHR: Double) -> HRZone? {
+        guard maxHR > 0, heartRate > 0 else { return nil }
+        let pct = heartRate / maxHR
+        switch pct {
+        case ..<0.50:  return HRZone(number: 1, label: "Recovery",  fuelType: "Fat")
+        case 0.50..<0.60: return HRZone(number: 2, label: "Fat Burn",  fuelType: "Fat")
+        case 0.60..<0.70: return HRZone(number: 3, label: "Cardio",    fuelType: "Mixed")
+        case 0.70..<0.85: return HRZone(number: 4, label: "Threshold", fuelType: "Carb")
+        default:          return HRZone(number: 5, label: "Peak",      fuelType: "Carb")
+        }
+    }
+}

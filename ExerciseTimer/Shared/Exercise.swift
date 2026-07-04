@@ -7,4 +7,6 @@ struct Exercise: Identifiable, Codable, Equatable {
     var sets: Int = 1
     var exerciseDuration: TimeInterval = 30
     var restDuration: TimeInterval = 10
+    var targetReps: Int? = nil
+    var weight: Double? = nil
 }

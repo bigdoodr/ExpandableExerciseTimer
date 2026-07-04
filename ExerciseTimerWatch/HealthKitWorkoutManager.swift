@@ -13,6 +13,9 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var activeCalories: Double = 0
     @Published var startError: String?
     @Published var isAuthorized = false
+    /// Estimated max heart rate derived from user's date of birth (220 − age).
+    /// Falls back to 185 BPM if DOB is unavailable.
+    @Published var maxHeartRate: Double = 185.0
 
     /// Throttle for forwarding health data to iPhone via WatchConnectivity
     private var lastHealthDataForward: Date = .distantPast
@@ -36,7 +39,8 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         let typesToShare: Set<HKSampleType> = [HKObjectType.workoutType()]
         let typesToRead: Set<HKObjectType> = [
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
-            HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!
+            HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
+            HKObjectType.characteristicType(forIdentifier: .dateOfBirth)!
         ]
 
         do {
@@ -58,6 +62,25 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             print("HealthKit authorization failed: \(error)")
             startError = "Authorization failed: \(error.localizedDescription)"
             isAuthorized = false
+        }
+
+        // Attempt DOB fetch regardless of write auth — characteristic reads are separate.
+        fetchMaxHeartRate()
+    }
+
+    /// Computes max heart rate as 220 − age using the user's HealthKit date of birth.
+    func fetchMaxHeartRate() {
+        do {
+            let dob = try healthStore.dateOfBirthComponents()
+            let currentYear = Calendar.current.component(.year, from: Date())
+            if let birthYear = dob.year {
+                let age = currentYear - birthYear
+                if age > 10 && age < 100 {
+                    maxHeartRate = Double(220 - age)
+                }
+            }
+        } catch {
+            // Keep default if DOB is unavailable or not granted
         }
     }
 

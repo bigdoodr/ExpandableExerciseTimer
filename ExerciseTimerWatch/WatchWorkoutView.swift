@@ -13,8 +13,10 @@ struct WatchWorkoutView: View {
     @State private var lastHealthDataSend: Date = .distantPast
     /// Confirmation before ending workout
     @State private var showEndConfirmation = false
-    /// Workout start time for duration calculation
+    /// Workout start time for elapsed-time display
     @State private var workoutStartDate: Date = .now
+    /// Running total of session elapsed time (updated every timer tick)
+    @State private var sessionElapsed: TimeInterval = 0
     /// Show recap screen after workout ends
     @State private var showRecap = false
     /// Captured recap data
@@ -74,6 +76,15 @@ struct WatchWorkoutView: View {
                     .multilineTextAlignment(.center)
             }
         }
+        .onAppear {
+            // Clear any leftover recap from a previous session
+            if !engine.isWorkoutRunning {
+                showRecap = false
+                recapData = nil
+                heartRateReadings = []
+                sessionElapsed = 0
+            }
+        }
         .onChange(of: connectivity.receivedCommand) { _, command in
             handleCommand(command)
         }
@@ -90,6 +101,12 @@ struct WatchWorkoutView: View {
     private var activeWorkoutView: some View {
         ScrollView {
             VStack(spacing: 8) {
+                // Session elapsed time
+                Text(engine.formatTime(sessionElapsed))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                
                 // Exercise info
                 Text(currentExerciseName)
                     .font(.headline)
@@ -98,6 +115,13 @@ struct WatchWorkoutView: View {
                 Text("Set \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                
+                // Weight reminder (if set)
+                if let weight = engine.currentExercise?.weight {
+                    Text(formatWeight(weight))
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                }
                 
                 // Phase indicator + timer
                 if engine.isCompleted {
@@ -128,6 +152,13 @@ struct WatchWorkoutView: View {
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.blue)
+                    
+                    // Target reps reminder
+                    if let targetReps = engine.currentExercise?.targetReps {
+                        Text("Target: \(targetReps) reps")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     
                     Button(action: {
                         WKInterfaceDevice.current().play(.click)
@@ -175,15 +206,24 @@ struct WatchWorkoutView: View {
                                     Text("\(Int(healthKit.heartRate))")
                                         .font(.caption)
                                         .bold()
+                                    Text("BPM")
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(.secondary)
+                                    // HR Zone
+                                    if let zone = HRZone.zone(for: healthKit.heartRate, maxHR: healthKit.maxHeartRate) {
+                                        Text("Z\(zone.number)·\(zone.fuelType)")
+                                            .font(.system(size: 8))
+                                            .foregroundStyle(hrZoneColor(zone.number))
+                                    }
                                 } else {
                                     Text("--")
                                         .font(.caption)
                                         .bold()
                                         .foregroundStyle(.secondary)
+                                    Text("BPM")
+                                        .font(.system(size: 8))
+                                        .foregroundStyle(.secondary)
                                 }
-                                Text("BPM")
-                                    .font(.system(size: 8))
-                                    .foregroundStyle(.secondary)
                             }
                             VStack(spacing: 2) {
                                 Image(systemName: "flame.fill")
@@ -268,9 +308,8 @@ struct WatchWorkoutView: View {
         }
         .onReceive(timer) { _ in
             engine.tickTimer()
+            sessionElapsed = Date().timeIntervalSince(workoutStartDate)
             // Accumulate heart rate readings for average calculation in recap.
-            // Health data forwarding to iPhone is handled by HealthKitWorkoutManager
-            // directly from the HKLiveWorkoutBuilderDelegate (works even when screen is off).
             if healthKit.isWorkoutActive,
                Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
                 let hr = healthKit.heartRate
@@ -395,6 +434,23 @@ struct WatchWorkoutView: View {
         return exercise.name.isEmpty ? "Exercise \(engine.displayExerciseNumber)" : exercise.name
     }
     
+    private func hrZoneColor(_ zone: Int) -> Color {
+        switch zone {
+        case 1: return .blue
+        case 2: return .teal
+        case 3: return .green
+        case 4: return .orange
+        default: return .red
+        }
+    }
+    
+    private func formatWeight(_ weight: Double) -> String {
+        let rounded = weight.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(weight))
+            : String(format: "%.1f", weight)
+        return "\(rounded) lbs"
+    }
+    
     // MARK: - Actions
     
     private func startWorkout() {
@@ -405,6 +461,7 @@ struct WatchWorkoutView: View {
         connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType))
         engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
         workoutStartDate = Date()
+        sessionElapsed = 0
         
         if hkEnabled {
             Task {
@@ -420,7 +477,6 @@ struct WatchWorkoutView: View {
     }
     
     private func endWorkoutWithRecap(completedNaturally: Bool) {
-        // Capture recap data before resetting state
         let duration = Date().timeIntervalSince(workoutStartDate)
         let exercisesCompleted: Int
         if completedNaturally {
@@ -453,6 +509,8 @@ struct WatchWorkoutView: View {
         showRecap = false
         recapData = nil
         engine.isWorkoutRunning = false
+        heartRateReadings = []
+        sessionElapsed = 0
     }
     
     private func computeSetsCompleted(completedNaturally: Bool) -> Int {
@@ -463,7 +521,6 @@ struct WatchWorkoutView: View {
         for i in 0..<engine.currentExerciseIndex {
             total += engine.exercises[i].sets
         }
-        // Add sets completed in the current exercise
         total += max(0, engine.currentSet - (engine.isResting ? 0 : 1))
         return total
     }
@@ -477,6 +534,7 @@ struct WatchWorkoutView: View {
         case .start(let exerciseList, let hkEnabled, let actType):
             engine.startWorkout(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
             workoutStartDate = Date()
+            sessionElapsed = 0
             
             if hkEnabled {
                 Task {
@@ -496,7 +554,6 @@ struct WatchWorkoutView: View {
                 isPaused: paused, phaseEndDate: endDate, isCompleted: completed
             )
             if completed {
-                // Natural completion — show recap after a brief delay
                 Task {
                     await healthKit.endWorkout()
                     let duration = Date().timeIntervalSince(workoutStartDate)
@@ -526,7 +583,6 @@ struct WatchWorkoutView: View {
             if healthKit.isWorkoutActive { healthKit.resumeWorkout() }
             
         case .stop:
-            // iPhone ended the workout — show recap
             let duration = Date().timeIntervalSince(workoutStartDate)
             let exercisesCompleted = min(engine.currentExerciseIndex + 1, engine.exercises.count)
             let setsCompleted = computeSetsCompleted(completedNaturally: false)
