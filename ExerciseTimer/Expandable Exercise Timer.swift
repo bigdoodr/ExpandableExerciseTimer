@@ -781,7 +781,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
-#if canImport(HealthKit)
+#if canImport(HealthKit) && !os(macOS)
     @StateObject private var healthKitManager = HealthKitWorkoutManager.shared
 #endif
     
@@ -1096,7 +1096,7 @@ struct WorkoutView: View {
 #if canImport(UIKit)
             stopBackgroundAudioLoop()
 #endif
-#if canImport(HealthKit)
+#if canImport(HealthKit) && !os(macOS)
             // Reset forwarded health data from watch
             if healthKitEnabled {
                 healthKitManager.heartRate = 0
@@ -1204,7 +1204,9 @@ struct WorkoutView: View {
                 .padding(.bottom)
             }
             .navigationTitle("Summary")
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+#endif
             .onAppear {
                 if recapCompletedNaturally {
                     playCompletionSound()
@@ -1244,7 +1246,7 @@ struct WorkoutView: View {
             recapSetsCompleted = sets
         }
         
-#if canImport(HealthKit)
+#if canImport(HealthKit) && !os(macOS)
         // Use average heart rate over the workout, falling back to last reading
         if !heartRateReadings.isEmpty {
             recapHeartRate = heartRateReadings.reduce(0, +) / Double(heartRateReadings.count)
@@ -1983,6 +1985,7 @@ struct RoutineManagerSheet: View {
                 }
             }
             .navigationTitle("Routines")
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1992,6 +1995,13 @@ struct RoutineManagerSheet: View {
                     EditButton()
                 }
             }
+#else
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+#endif
         }
     }
 }
