@@ -1,10 +1,6 @@
 import AppIntents
 import Foundation
 
-// UserDefaults key that the intent writes and ExerciseListView reads on foreground
-private let pendingRoutineKey = "pendingRoutineStart"
-private let savedRoutinesKey = "savedRoutines"
-
 // MARK: - Routine Entity
 
 @available(iOS 16.0, *)
@@ -35,7 +31,7 @@ struct RoutineEntityQuery: EntityQuery {
     }
 
     private func loadRoutines() -> [Routine] {
-        guard let data = UserDefaults.standard.data(forKey: savedRoutinesKey),
+        guard let data = UserDefaults.standard.data(forKey: "savedRoutines"),
               let routines = try? JSONDecoder().decode([Routine].self, from: data)
         else { return [] }
         return routines
@@ -57,7 +53,7 @@ struct StartRoutineIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         // Signal to the app which routine to load when it comes to foreground.
-        UserDefaults.standard.set(routine.id, forKey: pendingRoutineKey)
+        UserDefaults.standard.set(routine.id, forKey: "pendingRoutineStart")
         return .result()
     }
 }

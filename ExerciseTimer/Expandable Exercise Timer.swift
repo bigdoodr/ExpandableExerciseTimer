@@ -9,12 +9,11 @@ import UserNotifications
 #if canImport(HealthKit)
 import HealthKit
 #endif
+#if canImport(WatchConnectivity)
+import WatchConnectivity
+#endif
 import UniformTypeIdentifiers
 internal import Combine
-
-// Ensure all manager classes are available (they should be in the same target)
-// If HealthKitWorkoutManager.swift is not in your target, add it via:
-// Project Navigator → Select file → File Inspector → Target Membership
 
 fileprivate struct WorkoutUndoAction: Codable {
     let exerciseIndex: Int
@@ -50,8 +49,18 @@ struct ExerciseListView: View {
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
 #endif
     @State private var showingResetConfirm = false
-    
+    @State private var savedRoutines: [Routine] = []
+    @State private var showRoutineSheet = false
+    @State private var showSaveRoutineAlert = false
+    @State private var newRoutineName = ""
+#if canImport(WatchConnectivity)
+    @State private var isSearchingForWatch = false
+#endif
+    @Environment(\.scenePhase) private var scenePhase
+
     private let exercisesDefaultsKey = "savedExercises"
+    private let savedRoutinesKey = "savedRoutines"
+    private let pendingRoutineKey = "pendingRoutineStart"
     
     var body: some View {
         NavigationStack {
@@ -133,6 +142,8 @@ struct ExerciseListView: View {
             #endif
             // Primary actions group
             ToolbarItemGroup(placement: .primaryAction) {
+                Button(action: { showRoutineSheet = true }) { Image(systemName: "folder") }
+                    .accessibilityLabel("Routines")
                 Button(action: { showingImporter = true }) { Image(systemName: "square.and.arrow.down") }
                     .accessibilityLabel("Import")
                 Button(action: exportExercises) { Image(systemName: "square.and.arrow.up") }
@@ -157,6 +168,8 @@ struct ExerciseListView: View {
             if exercises.count == 1 && exercises.first?.name == "" && exercises.first?.isTimeBased == true && exercises.first?.sets == 1 && exercises.first?.exerciseDuration == 30 && exercises.first?.restDuration == 10 {
                 loadSavedExercises()
             }
+            loadSavedRoutines()
+            checkPendingRoutine()
         }
         .onChange(of: exercises) { _, _ in
             persistExercises()
@@ -167,6 +180,47 @@ struct ExerciseListView: View {
         .onChange(of: selectedActivityType) { _, _ in
             persistExercises()
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { checkPendingRoutine() }
+        }
+        .sheet(isPresented: $showRoutineSheet) {
+            RoutineManagerSheet(
+                savedRoutines: $savedRoutines,
+                currentExercises: exercises,
+                onLoad: { routine in
+                    exercises = routine.exercises
+                    showRoutineSheet = false
+                },
+                onSaved: { updated in
+                    savedRoutines = updated
+                    persistRoutines()
+                }
+            )
+        }
+        .alert("Save as Routine", isPresented: $showSaveRoutineAlert) {
+            TextField("Routine Name", text: $newRoutineName)
+            Button("Save") {
+                let trimmed = newRoutineName.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return }
+                let routine = Routine(name: trimmed, exercises: exercises)
+                savedRoutines.append(routine)
+                persistRoutines()
+                newRoutineName = ""
+            }
+            Button("Cancel", role: .cancel) { newRoutineName = "" }
+        }
+#if canImport(WatchConnectivity)
+        .fullScreenCover(isPresented: $isSearchingForWatch) {
+            NavigationStack {
+                WatchSearchView(
+                    exercises: exercises,
+                    isPresented: $isSearchingForWatch,
+                    isWorkoutActive: $isWorkoutActive
+                )
+                .environmentObject(connectivity)
+            }
+        }
+#endif
     }
     
     @ViewBuilder
@@ -174,6 +228,25 @@ struct ExerciseListView: View {
         Section {
             ForEach(Array(exercises.indices), id: \.self) { index in
                 ExerciseEntryRow(exercise: $exercises[index])
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            var copy = exercises[index]
+                            copy.id = UUID()
+                            exercises.insert(copy, at: index + 1)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                        .tint(.blue)
+                    }
+                    .contextMenu {
+                        Button {
+                            var copy = exercises[index]
+                            copy.id = UUID()
+                            exercises.insert(copy, at: index + 1)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                    }
             }
             .onMove { (indices: IndexSet, newOffset: Int) in
                 exercises.move(fromOffsets: indices, toOffset: newOffset)
@@ -255,17 +328,7 @@ struct ExerciseListView: View {
     @ViewBuilder
     private var startSection: some View {
         Section {
-            Button(action: {
-#if canImport(WatchConnectivity) && canImport(HealthKit)
-                let command = WorkoutCommand.start(
-                    exercises: exercises,
-                    healthKitEnabled: enableHealthKitTracking,
-                    activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
-                )
-                WatchConnectivityManager.shared.sendWorkoutCommand(command)
-#endif
-                isWorkoutActive = true
-            }) {
+            Button(action: startOrSearchForWatch) {
                 HStack {
                     Image(systemName: "play.fill")
                     Text("Start Workout")
@@ -274,7 +337,52 @@ struct ExerciseListView: View {
                 .foregroundStyle(.green)
             }
             .buttonStyle(.plain)
+
+            Button(action: { showSaveRoutineAlert = true }) {
+                HStack {
+                    Image(systemName: "folder.badge.plus")
+                    Text("Save as Routine…")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
         }
+    }
+
+    private func startOrSearchForWatch() {
+#if canImport(WatchConnectivity)
+        if WCSession.isSupported() {
+#if canImport(HealthKit)
+            WatchConnectivityManager.shared.updateContext(
+                exercises: exercises,
+                healthKitEnabled: enableHealthKitTracking,
+                activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+            )
+#else
+            WatchConnectivityManager.shared.updateContext(
+                exercises: exercises,
+                healthKitEnabled: false,
+                activityType: nil
+            )
+#endif
+            isSearchingForWatch = true
+            return
+        }
+#endif
+        launchWorkoutDirectly()
+    }
+
+    private func launchWorkoutDirectly() {
+#if canImport(WatchConnectivity) && canImport(HealthKit)
+        let command = WorkoutCommand.start(
+            exercises: exercises,
+            healthKitEnabled: enableHealthKitTracking,
+            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+        )
+        WatchConnectivityManager.shared.sendWorkoutCommand(command)
+#endif
+        isWorkoutActive = true
     }
     
     // Helper row to reduce type-checker load
@@ -331,18 +439,47 @@ struct ExerciseListView: View {
         )
 #endif
     }
+
+    private func loadSavedRoutines() {
+        if let data = UserDefaults.standard.data(forKey: savedRoutinesKey),
+           let decoded = try? JSONDecoder().decode([Routine].self, from: data) {
+            savedRoutines = decoded
+        }
+    }
+
+    private func persistRoutines() {
+        if let data = try? JSONEncoder().encode(savedRoutines) {
+            UserDefaults.standard.set(data, forKey: savedRoutinesKey)
+        }
+    }
+
+    private func checkPendingRoutine() {
+        guard let idStr = UserDefaults.standard.string(forKey: pendingRoutineKey),
+              let uuid = UUID(uuidString: idStr),
+              let routine = savedRoutines.first(where: { $0.id == uuid }) else { return }
+        UserDefaults.standard.removeObject(forKey: pendingRoutineKey)
+        exercises = routine.exercises
+#if canImport(WatchConnectivity)
+        isSearchingForWatch = true
+#else
+        isWorkoutActive = true
+#endif
+    }
     
 #if canImport(WatchConnectivity)
     /// Handle workout commands received from Apple Watch
     private func handleWatchCommand(_ command: WorkoutCommand?) {
         guard let command else { return }
-        
+
         switch command {
         case .start(let exerciseList, _, _):
             // Watch is starting a workout — iPhone drives timers
             exercises = exerciseList
+#if canImport(WatchConnectivity)
+            isSearchingForWatch = false
+#endif
             isWorkoutActive = true
-            
+
         default:
             // Other commands (stop, updatePhase, pause, resume) are handled by WorkoutView
             break
@@ -410,9 +547,56 @@ struct ExerciseEntryView: View {
                     
                     if exercise.isTimeBased {
                         DurationPickerView(title: "Exercise Duration", duration: $exercise.exerciseDuration)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Target Reps")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            if exercise.targetReps != nil {
+                                Stepper(
+                                    "\(exercise.targetReps ?? 10) reps",
+                                    value: Binding(
+                                        get: { exercise.targetReps ?? 10 },
+                                        set: { exercise.targetReps = $0 }
+                                    ),
+                                    in: 1...999
+                                )
+                                Button("Clear") { exercise.targetReps = nil }
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Button("Set target reps") { exercise.targetReps = 10 }
+                                    .font(.caption)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
                     }
-                    
+
                     DurationPickerView(title: "Rest Duration", duration: $exercise.restDuration)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Weight")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if exercise.weight != nil {
+                            Stepper(
+                                String(format: (exercise.weight ?? 0).truncatingRemainder(dividingBy: 1) == 0 ? "%.0f lbs" : "%.1f lbs", exercise.weight ?? 0),
+                                value: Binding(
+                                    get: { exercise.weight ?? 0 },
+                                    set: { exercise.weight = max(0, $0) }
+                                ),
+                                in: 0...999,
+                                step: 2.5
+                            )
+                            Button("Clear weight") { exercise.weight = nil }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button("Add weight") { exercise.weight = 0 }
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+                    }
                 }
                 .padding()
 #if os(iOS)
@@ -623,6 +807,7 @@ struct WorkoutView: View {
     @State private var recapCalories: Double = 0
     @State private var recapCompletedNaturally = false
     @State private var heartRateReadings: [Double] = []
+    @State private var sessionElapsed: TimeInterval = 0
     
     let audioEngine = AVAudioEngine()
     /// Retained reference for completion sound so AVAudioPlayer isn't deallocated mid-play
@@ -720,6 +905,11 @@ struct WorkoutView: View {
     private var workoutContent: some View {
         ScrollView {
             VStack(spacing: 30) {
+                Text(formatTime(sessionElapsed))
+                    .font(.title3)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+
                 VStack(spacing: 8) {
                     Text("Exercise \(displayExerciseNumber) of \(totalExercises)")
                         .font(.subheadline)
@@ -728,13 +918,19 @@ struct WorkoutView: View {
                     Text(currentExercise.name.isEmpty ? "Exercise \(displayExerciseNumber)" : currentExercise.name)
                         .font(.largeTitle)
                         .bold()
-                    
+
                     Text("Set \(currentSet) of \(currentExercise.sets)")
                         .font(.title2)
                         .foregroundStyle(.secondary)
+
+                    if let weight = currentExercise.weight {
+                        Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f lbs" : "%.1f lbs", weight))
+                            .font(.subheadline)
+                            .foregroundStyle(.blue)
+                    }
                 }
                 .padding()
-                
+
                 if isResting {
                     VStack(spacing: 20) {
                         Text("REST")
@@ -765,10 +961,16 @@ struct WorkoutView: View {
                             .font(.title)
                             .bold()
                             .foregroundStyle(.blue)
-                        
-                        Text("Complete your reps")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
+
+                        if let targetReps = currentExercise.targetReps {
+                            Text("Target: \(targetReps) reps")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Complete your reps")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                        }
                         
                         Button(action: {
                             repsCompleteTapped()
@@ -838,6 +1040,7 @@ struct WorkoutView: View {
             .padding(.top)
         }
         .onReceive(timer) { _ in
+            sessionElapsed = Date().timeIntervalSince(workoutStartDate)
             if !isExiting && !isCompleted && !showRecap && !isPaused && (currentExercise.isTimeBased || isResting) {
                 let now = Date()
                 timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
@@ -1404,7 +1607,7 @@ struct WorkoutView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             if healthKitManager.heartRate > 0 {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text("\(Int(healthKitManager.heartRate))")
@@ -1414,6 +1617,17 @@ struct WorkoutView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if let zone = HRZone.zone(for: healthKitManager.heartRate, maxHR: healthKitManager.maxHeartRate) {
+                    HStack(spacing: 4) {
+                        Text("Zone \(zone.number)")
+                            .bold()
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text(zone.fuelType)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(hrZoneColor(zone.number))
+                }
             } else {
                 Text("--")
                     .font(.system(size: 36, weight: .bold, design: .rounded))
@@ -1421,6 +1635,16 @@ struct WorkoutView: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func hrZoneColor(_ zone: Int) -> Color {
+        switch zone {
+        case 1: return .blue
+        case 2: return .teal
+        case 3: return .green
+        case 4: return .orange
+        default: return .red
+        }
     }
     
     private var caloriesMetric: some View {
@@ -1720,6 +1944,173 @@ struct WorkoutView: View {
         }
     }
 }
+
+// MARK: - Routine Manager Sheet
+
+struct RoutineManagerSheet: View {
+    @Binding var savedRoutines: [Routine]
+    let currentExercises: [Exercise]
+    let onLoad: (Routine) -> Void
+    let onSaved: ([Routine]) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if savedRoutines.isEmpty {
+                    Text("No saved routines yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(savedRoutines) { routine in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(routine.name)
+                                    .font(.headline)
+                                Text("\(routine.exercises.count) exercise\(routine.exercises.count == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Load") { onLoad(routine) }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .onDelete { indexSet in
+                        savedRoutines.remove(atOffsets: indexSet)
+                        onSaved(savedRoutines)
+                    }
+                }
+            }
+            .navigationTitle("Routines")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    EditButton()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Watch Search View
+
+#if canImport(WatchConnectivity)
+struct WatchSearchView: View {
+    let exercises: [Exercise]
+    @Binding var isPresented: Bool
+    @Binding var isWorkoutActive: Bool
+
+    @EnvironmentObject private var connectivity: WatchConnectivityManager
+    @State private var countdown = 30
+    @State private var watchFound = false
+    @State private var timedOut = false
+
+    var body: some View {
+        VStack(spacing: 32) {
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.12))
+                    .frame(width: 130, height: 130)
+                Image(systemName: watchFound ? "applewatch.radiowaves.left.and.right" : "applewatch")
+                    .font(.system(size: 52))
+                    .foregroundStyle(watchFound ? .green : .blue)
+            }
+
+            VStack(spacing: 10) {
+                if timedOut && !watchFound {
+                    Text("Apple Watch Not Found")
+                        .font(.title2).bold()
+                    Text("Make sure Exercise Timer is installed and open on your Apple Watch, then try again.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                } else if watchFound {
+                    Text("Apple Watch Connected")
+                        .font(.title2).bold()
+                        .foregroundStyle(.green)
+                    Text("Open Exercise Timer on your Apple Watch and tap Start Workout.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("Searching for Apple Watch…")
+                        .font(.title2).bold()
+                    Text("Open Exercise Timer on your Apple Watch to begin.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    if !timedOut {
+                        ProgressView()
+                            .padding(.top, 4)
+                        Text("\(countdown)s")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 32)
+
+            Spacer()
+
+            VStack(spacing: 14) {
+                Button(action: continueOnIPhone) {
+                    Text(timedOut && !watchFound ? "Start on iPhone" : "Continue on iPhone")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(timedOut && !watchFound ? Color.blue : Color.gray.opacity(0.7))
+                        .cornerRadius(12)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 32)
+        }
+        .navigationTitle("Starting Workout")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Cancel") { isPresented = false }
+            }
+        }
+        .onAppear {
+            watchFound = connectivity.isWatchReachable
+        }
+        .onChange(of: connectivity.isWatchReachable) { _, reachable in
+            if reachable { watchFound = true }
+        }
+        .onChange(of: connectivity.receivedCommand) { _, command in
+            if case .start(_, _, _) = command {
+                isPresented = false
+                isWorkoutActive = true
+            }
+        }
+        .task {
+            while countdown > 0 && !watchFound && !timedOut {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                countdown -= 1
+            }
+            if !watchFound { timedOut = true }
+        }
+    }
+
+    private func continueOnIPhone() {
+#if canImport(HealthKit)
+        WatchConnectivityManager.shared.sendWorkoutCommand(
+            .start(exercises: exercises, healthKitEnabled: false, activityType: nil)
+        )
+#endif
+        isPresented = false
+        isWorkoutActive = true
+    }
+}
+#endif
 
 struct ExerciseDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
