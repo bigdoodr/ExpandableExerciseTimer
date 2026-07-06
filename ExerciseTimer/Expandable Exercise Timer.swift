@@ -494,27 +494,27 @@ struct ExerciseEntryView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: {
+            HStack {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                Text(exercise.name.isEmpty ? "New Exercise" : exercise.name)
+                    .font(.headline)
+                Spacer()
+            }
+            .foregroundStyle(.primary)
+            .padding()
+#if os(iOS)
+            .background(Color(uiColor: .systemGray6))
+#elseif os(macOS)
+            .background(Color(nsColor: .windowBackgroundColor))
+#else
+            .background(Color.gray.opacity(0.15))
+#endif
+            .cornerRadius(12)
+            .contentShape(Rectangle())
+            .onTapGesture {
                 withAnimation {
                     isExpanded.toggle()
                 }
-            }) {
-                HStack {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    Text(exercise.name.isEmpty ? "New Exercise" : exercise.name)
-                        .font(.headline)
-                    Spacer()
-                }
-                .foregroundStyle(.primary)
-                .padding()
-#if os(iOS)
-                .background(Color(uiColor: .systemGray6))
-#elseif os(macOS)
-                .background(Color(nsColor: .windowBackgroundColor))
-#else
-                .background(Color.gray.opacity(0.15))
-#endif
-                .cornerRadius(12)
             }
             
             if isExpanded {
@@ -579,22 +579,36 @@ struct ExerciseEntryView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         if exercise.weight != nil {
-                            Stepper(
-                                String(format: (exercise.weight ?? 0).truncatingRemainder(dividingBy: 1) == 0 ? "%.0f lbs" : "%.1f lbs", exercise.weight ?? 0),
-                                value: Binding(
+                            HStack(spacing: 8) {
+                                TextField("0", value: Binding(
                                     get: { exercise.weight ?? 0 },
                                     set: { exercise.weight = max(0, $0) }
-                                ),
-                                in: 0...999,
-                                step: 2.5
-                            )
-                            Button("Clear weight") { exercise.weight = nil }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                ), format: .number)
+#if os(iOS)
+                                .keyboardType(.decimalPad)
+#endif
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 90)
+
+                                Picker("Unit", selection: $exercise.weightUnit) {
+                                    Text("LB").tag(WeightUnit.lbs)
+                                    Text("KG").tag(WeightUnit.kg)
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 80)
+
+                                Spacer()
+
+                                Button("Clear") { exercise.weight = nil }
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
+                            }
                         } else {
                             Button("Add weight") { exercise.weight = 0 }
                                 .font(.caption)
                                 .foregroundStyle(.blue)
+                                .buttonStyle(.plain)
                         }
                     }
                 }
@@ -924,7 +938,7 @@ struct WorkoutView: View {
                         .foregroundStyle(.secondary)
 
                     if let weight = currentExercise.weight {
-                        Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f lbs" : "%.1f lbs", weight))
+                        Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight))
                             .font(.subheadline)
                             .foregroundStyle(.blue)
                     }

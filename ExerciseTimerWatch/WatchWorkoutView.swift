@@ -117,8 +117,8 @@ struct WatchWorkoutView: View {
                     .foregroundStyle(.secondary)
                 
                 // Weight reminder (if set)
-                if let weight = engine.currentExercise?.weight {
-                    Text(formatWeight(weight))
+                if let currentEx = engine.currentExercise, let weight = currentEx.weight {
+                    Text(formatWeight(weight, unit: currentEx.weightUnit))
                         .font(.caption2)
                         .foregroundStyle(.blue)
                 }
@@ -444,11 +444,11 @@ struct WatchWorkoutView: View {
         }
     }
     
-    private func formatWeight(_ weight: Double) -> String {
+    private func formatWeight(_ weight: Double, unit: WeightUnit = .lbs) -> String {
         let rounded = weight.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(weight))
             : String(format: "%.1f", weight)
-        return "\(rounded) lbs"
+        return "\(rounded) \(unit.rawValue)"
     }
     
     // MARK: - Actions
