@@ -44,7 +44,7 @@ struct ExerciseListView: View {
     @State private var keepScreenAwake = false
     @State private var enableBackgroundAudio = false
 #endif
-#if canImport(HealthKit)
+#if os(iOS)
     @State private var enableHealthKitTracking = false
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
 #endif
@@ -85,7 +85,7 @@ struct ExerciseListView: View {
     
     @ViewBuilder
     private var workoutViewForPlatform: some View {
-        #if canImport(UIKit) && canImport(HealthKit)
+        #if os(iOS)
         WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
@@ -94,24 +94,12 @@ struct ExerciseListView: View {
             healthKitEnabled: enableHealthKitTracking,
             activityType: selectedActivityType
         )
-        #elseif canImport(UIKit)
-        WorkoutView(
-            exercises: exercises,
-            isActive: $isWorkoutActive,
-            keepScreenAwake: $keepScreenAwake,
-            enableBackgroundAudio: $enableBackgroundAudio
-        )
-        #elseif canImport(HealthKit)
-        WorkoutView(
-            exercises: exercises,
-            isActive: $isWorkoutActive,
-            healthKitEnabled: enableHealthKitTracking,
-            activityType: selectedActivityType
-        )
         #else
         WorkoutView(
             exercises: exercises,
-            isActive: $isWorkoutActive
+            isActive: $isWorkoutActive,
+            healthKitEnabled: false,
+            activityType: .functionalStrengthTraining
         )
         #endif
     }
@@ -124,7 +112,7 @@ struct ExerciseListView: View {
             keepAwakeSection
             backgroundAudioSection
 #endif
-#if canImport(HealthKit)
+#if os(iOS)
             healthKitSection
 #endif
             startSection
@@ -174,12 +162,14 @@ struct ExerciseListView: View {
         .onChange(of: exercises) { _, _ in
             persistExercises()
         }
+#if os(iOS)
         .onChange(of: enableHealthKitTracking) { _, _ in
             persistExercises()
         }
         .onChange(of: selectedActivityType) { _, _ in
             persistExercises()
         }
+#endif
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { checkPendingRoutine() }
         }
@@ -302,7 +292,7 @@ struct ExerciseListView: View {
     }
 #endif
     
-#if canImport(HealthKit)
+#if os(iOS)
     @ViewBuilder
     private var healthKitSection: some View {
         Section(footer: Text("When enabled, workouts are recorded to Apple Health via Apple Watch. Requires a paired Apple Watch. Disable this for non-exercise timers.")) {
@@ -391,6 +381,9 @@ struct ExerciseListView: View {
 
         var body: some View {
             ExerciseEntryView(exercise: $exercise)
+#if os(macOS)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+#endif
         }
     }
     
@@ -494,6 +487,30 @@ struct ExerciseEntryView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+#if os(macOS)
+            HStack(spacing: 0) {
+                Image(systemName: "line.3.horizontal")
+                    .foregroundStyle(.tertiary)
+                    .font(.callout)
+                    .frame(width: 20)
+                HStack {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    Text(exercise.name.isEmpty ? "New Exercise" : exercise.name)
+                        .font(.headline)
+                    Spacer()
+                }
+                .foregroundStyle(.primary)
+                .padding()
+                .background(Color(nsColor: .windowBackgroundColor))
+                .cornerRadius(12)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation {
+                        isExpanded.toggle()
+                    }
+                }
+            }
+#else
             HStack {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 Text(exercise.name.isEmpty ? "New Exercise" : exercise.name)
@@ -504,8 +521,6 @@ struct ExerciseEntryView: View {
             .padding()
 #if os(iOS)
             .background(Color(uiColor: .systemGray6))
-#elseif os(macOS)
-            .background(Color(nsColor: .windowBackgroundColor))
 #else
             .background(Color.gray.opacity(0.15))
 #endif
@@ -516,6 +531,7 @@ struct ExerciseEntryView: View {
                     isExpanded.toggle()
                 }
             }
+#endif
             
             if isExpanded {
                 VStack(alignment: .leading, spacing: 16) {
