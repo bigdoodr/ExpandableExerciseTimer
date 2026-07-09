@@ -225,6 +225,11 @@ struct ExerciseListView: View {
             ForEach(Array(exercises.indices), id: \.self) { index in
                 ExerciseEntryRow(exercise: $exercises[index])
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            exercises.remove(at: index)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                         Button {
                             var copy = exercises[index]
                             copy.id = UUID()
