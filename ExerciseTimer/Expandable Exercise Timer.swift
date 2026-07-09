@@ -56,6 +56,7 @@ struct ExerciseListView: View {
 #if canImport(WatchConnectivity)
     @State private var isSearchingForWatch = false
 #endif
+    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "hasSeenOnboarding")
     @Environment(\.scenePhase) private var scenePhase
 
     private let exercisesDefaultsKey = "savedExercises"
@@ -211,6 +212,11 @@ struct ExerciseListView: View {
             }
         }
 #endif
+        .sheet(isPresented: $showOnboarding, onDismiss: {
+            UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+        }) {
+            OnboardingView()
+        }
     }
     
     @ViewBuilder
