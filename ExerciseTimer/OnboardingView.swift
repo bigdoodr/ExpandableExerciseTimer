@@ -65,7 +65,11 @@ struct OnboardingView: View {
                             .tag(index)
                     }
                 }
+                #if os(macOS)
+                .tabViewStyle(.automatic)
+                #else
                 .tabViewStyle(.page(indexDisplayMode: .always))
+                #endif
 
                 actionButton
                     .padding(.horizontal, 32)
