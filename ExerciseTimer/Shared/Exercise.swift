@@ -34,4 +34,17 @@ struct Exercise: Identifiable, Codable, Equatable {
         weight = try container.decodeIfPresent(Double.self, forKey: .weight)
         weightUnit = try container.decodeIfPresent(WeightUnit.self, forKey: .weightUnit) ?? .lbs
     }
+
+    /// A compact "weight · reps" summary for use in "Up Next" labels.
+    var quickSummary: String {
+        var parts: [String] = []
+        if let w = weight {
+            let n = w.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(w))" : String(format: "%.1f", w)
+            parts.append("\(n) \(weightUnit.rawValue)")
+        }
+        if !isTimeBased, let reps = targetReps {
+            parts.append("\(reps) reps")
+        }
+        return parts.joined(separator: " · ")
+    }
 }

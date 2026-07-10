@@ -108,7 +108,7 @@ final class WatchWorkoutEngine: ObservableObject {
                     return "Up Next: Workout Complete"
                 } else {
                     let next = exercises[nextIndex]
-                    return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
+                    return "Up Next: \(nextExerciseLabel(next, index: nextIndex))"
                 }
             }
         } else {
@@ -127,11 +127,17 @@ final class WatchWorkoutEngine: ObservableObject {
                         return "Up Next: Workout Complete"
                     } else {
                         let next = exercises[nextIndex]
-                        return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
+                        return "Up Next: \(nextExerciseLabel(next, index: nextIndex))"
                     }
                 }
             }
         }
+    }
+
+    private func nextExerciseLabel(_ exercise: Exercise, index: Int) -> String {
+        let name = exercise.name.isEmpty ? "Exercise \(index + 1)" : exercise.name
+        let summary = exercise.quickSummary
+        return summary.isEmpty ? name : "\(name) · \(summary)"
     }
     
     func formatTime(_ time: TimeInterval) -> String {

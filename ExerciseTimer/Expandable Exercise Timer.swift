@@ -894,7 +894,9 @@ struct WorkoutView: View {
                     return "Up Next: Workout Complete"
                 } else {
                     let next = exercises[nextIndex]
-                    return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
+                    let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
+                    let nextSummary = next.quickSummary
+                    return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
                 }
             }
         } else {
@@ -916,7 +918,9 @@ struct WorkoutView: View {
                         return "Up Next: Workout Complete"
                     } else {
                         let next = exercises[nextIndex]
-                        return "Up Next: \(next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name)"
+                        let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
+                        let nextSummary = next.quickSummary
+                        return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
                     }
                 }
             }
@@ -966,8 +970,16 @@ struct WorkoutView: View {
 
                     if let weight = currentExercise.weight {
                         Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight))
-                            .font(.subheadline)
+                            .font(.title3)
+                            .bold()
                             .foregroundStyle(.blue)
+                    }
+
+                    if !currentExercise.isTimeBased, let reps = currentExercise.targetReps {
+                        Text("\(reps) reps")
+                            .font(.title3)
+                            .bold()
+                            .foregroundStyle(.purple)
                     }
                 }
                 .padding()
@@ -1366,6 +1378,9 @@ struct WorkoutView: View {
             if !healthKitManager.isWorkoutActive {
                 healthKitManager.isWorkoutActive = true
             }
+
+        case .wake:
+            break
         }
     }
 #endif
@@ -1953,18 +1968,24 @@ struct WorkoutView: View {
     }
 
     func playSound() {
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 22050)!
-        buffer.frameLength = 22050
+        let sampleRate: Double = 44100
+        // C5 (523 Hz) — pleasant and clear without being harsh
+        let frequency: Float = 523.0
+        let amplitude: Float = 0.22
+        let duration: Double = 0.22
+        let frameCount = AVAudioFrameCount(sampleRate * duration)
 
-        let channels = UnsafeBufferPointer(start: buffer.floatChannelData, count: Int(format.channelCount))
-        let samples = UnsafeMutableBufferPointer(start: channels[0], count: Int(buffer.frameLength))
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
+        buffer.frameLength = frameCount
 
-        for i in 0..<Int(buffer.frameLength) {
-            let frequency: Float = 880.0
-            let amplitude: Float = 0.3
-            let phase = Float(i) * frequency / Float(format.sampleRate)
-            samples[i] = sin(phase * 2 * .pi) * amplitude
+        let samples = UnsafeMutableBufferPointer(start: buffer.floatChannelData![0], count: Int(frameCount))
+        for i in 0..<Int(frameCount) {
+            // Hanning envelope: smooth attack and release, no click or pop
+            let t = Double(i) / Double(frameCount - 1)
+            let envelope = Float(0.5 * (1.0 - cos(2.0 * .pi * t)))
+            let phase = Float(i) * frequency / Float(sampleRate)
+            samples[i] = sin(phase * 2 * .pi) * amplitude * envelope
         }
 
         let playerNode = AVAudioPlayerNode()
@@ -1981,7 +2002,7 @@ struct WorkoutView: View {
         }
         playerNode.play()
         playerNode.scheduleBuffer(buffer, at: nil, options: []) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 playerNode.stop()
             }
         }
@@ -2132,6 +2153,10 @@ struct WatchSearchView: View {
         }
         .onAppear {
             watchFound = connectivity.isWatchReachable
+            // Send a message to wake the watch app so the user doesn't have to open it manually.
+            // sendWorkoutCommand uses sendMessage when the watch is reachable, which launches
+            // the watch extension in the background (visible on next wrist raise).
+            WatchConnectivityManager.shared.sendWorkoutCommand(.wake)
         }
         .onChange(of: connectivity.isWatchReachable) { _, reachable in
             if reachable { watchFound = true }

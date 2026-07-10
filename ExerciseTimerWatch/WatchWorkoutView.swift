@@ -107,6 +107,11 @@ struct WatchWorkoutView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                 
+                // Exercise count
+                Text("Exercise \(engine.displayExerciseNumber) of \(engine.exercises.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
                 // Exercise info
                 Text(currentExerciseName)
                     .font(.headline)
@@ -121,6 +126,15 @@ struct WatchWorkoutView: View {
                     Text(formatWeight(weight, unit: currentEx.weightUnit))
                         .font(.caption2)
                         .foregroundStyle(.blue)
+                }
+
+                // Target reps reminder (if rep-based)
+                if let currentEx = engine.currentExercise,
+                   !currentEx.isTimeBased,
+                   let reps = currentEx.targetReps {
+                    Text("\(reps) reps")
+                        .font(.caption2)
+                        .foregroundStyle(.purple)
                 }
                 
                 // Phase indicator + timer
@@ -152,13 +166,6 @@ struct WatchWorkoutView: View {
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.blue)
-                    
-                    // Target reps reminder
-                    if let targetReps = engine.currentExercise?.targetReps {
-                        Text("Target: \(targetReps) reps")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
                     
                     Button(action: {
                         WKInterfaceDevice.current().play(.click)
@@ -309,6 +316,9 @@ struct WatchWorkoutView: View {
         .onReceive(timer) { _ in
             engine.tickTimer()
             sessionElapsed = Date().timeIntervalSince(workoutStartDate)
+            // Push health data to iPhone on every tick (throttled inside forwardHealthDataIfNeeded)
+            // This ensures iPhone stays in sync even when HealthKit doesn't deliver new samples.
+            healthKit.forwardHealthDataIfNeeded()
             // Accumulate heart rate readings for average calculation in recap.
             if healthKit.isWorkoutActive,
                Date().timeIntervalSince(lastHealthDataSend) >= 2.0 {
@@ -600,8 +610,8 @@ struct WatchWorkoutView: View {
             engine.stopWorkout()
             Task { await healthKit.endWorkout() }
             showRecap = true
-            
-        case .healthData, .repsComplete:
+
+        case .healthData, .repsComplete, .wake:
             break
         }
     }

@@ -12,6 +12,8 @@ enum WorkoutCommand: Codable, Equatable {
     case healthData(heartRate: Double, activeCalories: Double)
     /// Sent from watch to iPhone when user completes a rep-based set
     case repsComplete
+    /// Sent from iPhone to watch to wake the watch app; no action needed on receipt
+    case wake
 }
 
 /// Keys for WatchConnectivity message/context dictionaries

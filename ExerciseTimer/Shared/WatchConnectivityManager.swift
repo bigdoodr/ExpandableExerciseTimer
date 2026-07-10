@@ -41,7 +41,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 // Only queue commands that are safe to deliver out-of-order later.
                 // Never queue time-sensitive or idempotent-breaking commands.
                 switch command {
-                case .healthData, .stop, .pause, .resume, .repsComplete: return
+                case .healthData, .stop, .pause, .resume, .repsComplete, .wake: return
                 default: break
                 }
                 session.transferUserInfo(message)
@@ -49,7 +49,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         } else {
             // When counterpart is unreachable, only queue durable setup commands.
             switch command {
-            case .healthData, .stop, .pause, .resume, .repsComplete: return
+            case .healthData, .stop, .pause, .resume, .repsComplete, .wake: return
             default: break
             }
             session.transferUserInfo(message)
