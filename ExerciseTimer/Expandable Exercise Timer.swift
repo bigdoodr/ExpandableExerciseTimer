@@ -367,6 +367,7 @@ struct ExerciseListView: View {
                 activityType: nil
             )
 #endif
+            WatchConnectivityManager.shared.sendWorkoutCommand(.wake)
             isSearchingForWatch = true
             return
         }
@@ -2106,14 +2107,14 @@ struct WatchSearchView: View {
                     Text("Apple Watch Connected")
                         .font(.title2).bold()
                         .foregroundStyle(.green)
-                    Text("Open Exercise Timer on your Apple Watch and tap Start Workout.")
+                    Text("Tap Start Workout on your Apple Watch to begin.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 } else {
                     Text("Searching for Apple Watch…")
                         .font(.title2).bold()
-                    Text("Open Exercise Timer on your Apple Watch to begin.")
+                    Text("Your Apple Watch should appear automatically. If not, open Exercise Timer on your Watch.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

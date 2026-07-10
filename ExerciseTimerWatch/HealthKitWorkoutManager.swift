@@ -84,34 +84,57 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         }
     }
 
+    /// Prepares a workout session without starting it, causing watchOS to surface the app on wrist raise.
+    /// Call this on receipt of the `.wake` command so the Watch app is ready before the user acts.
+    func prepareWorkoutSession(with configuration: HKWorkoutConfiguration) async {
+        guard workoutSession == nil else { return }
+#if os(watchOS)
+        do {
+            let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
+            session.delegate = self
+            self.workoutSession = session
+            session.prepare()
+        } catch {
+            print("Failed to prepare workout session: \(error)")
+        }
+#endif
+    }
+
     func startWorkoutSession(with configuration: HKWorkoutConfiguration) async {
         startError = nil
-
-        // Force-clean any stale session from a previous workout
-        if workoutSession != nil {
-            await cleanupSession()
-        }
 
         do {
             // On watchOS, HKWorkoutSession + HKLiveWorkoutBuilder have been available
             // since watchOS 5 — no runtime availability check is needed.
             // On iOS, this API requires iOS 26+.
 #if os(watchOS)
-            let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
+            // Reuse a session already in .prepared state (set up by prepareWorkoutSession on .wake),
+            // so the Watch app stays surfaced without a visible gap.
+            let session: HKWorkoutSession
+            if let existing = workoutSession, existing.state == .prepared {
+                session = existing
+            } else {
+                if workoutSession != nil { await cleanupSession() }
+                session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
+                session.delegate = self
+                self.workoutSession = session
+            }
             let builder = session.associatedWorkoutBuilder()
             builder.dataSource = HKLiveWorkoutDataSource(
                 healthStore: healthStore,
                 workoutConfiguration: configuration
             )
-            session.delegate = self
             builder.delegate = self
-            self.workoutSession = session
             self.liveWorkoutBuilder = builder
             let startDate = Date()
             session.startActivity(with: startDate)
             try await builder.beginCollection(at: startDate)
             isWorkoutActive = true
 #else
+            // Force-clean any stale session from a previous workout
+            if workoutSession != nil {
+                await cleanupSession()
+            }
             if #available(iOS 26.0, *) {
                 let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
                 let builder = session.associatedWorkoutBuilder()

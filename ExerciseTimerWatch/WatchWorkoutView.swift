@@ -611,7 +611,19 @@ struct WatchWorkoutView: View {
             Task { await healthKit.endWorkout() }
             showRecap = true
 
-        case .healthData, .repsComplete, .wake:
+        case .wake:
+            if connectivity.receivedHealthKitEnabled {
+                let actType = connectivity.receivedActivityType
+                Task {
+                    await healthKit.requestAuthorization()
+                    if healthKit.isAuthorized {
+                        let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
+                        await healthKit.prepareWorkoutSession(with: config)
+                    }
+                }
+            }
+
+        case .healthData, .repsComplete:
             break
         }
     }
