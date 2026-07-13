@@ -23,9 +23,14 @@ struct WatchWorkoutView: View {
     @State private var recapData: WorkoutRecap?
     /// Accumulated heart rate readings for average calculation
     @State private var heartRateReadings: [Double] = []
-    
+    /// When the current recap was created — used to auto-dismiss stale recaps
+    @State private var recapCreatedAt: Date = .distantPast
+
+    /// Recaps older than this are dismissed when the app is (re)opened
+    private static let recapStaleInterval: TimeInterval = 5 * 60
+
     let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
-    
+
     var body: some View {
         Group {
             if let recap = recapData, showRecap {
@@ -43,6 +48,26 @@ struct WatchWorkoutView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Are you sure you want to end this workout?")
+        }
+        // Handlers live on the outer Group so commands are processed no matter
+        // which screen (waiting / active / recap) is currently showing.
+        .onChange(of: connectivity.receivedCommand) { _, command in
+            handleCommand(command)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            if engine.isWorkoutRunning {
+                engine.recalculateOnWake()
+            }
+            // Reopening the app long after a workout ended: drop the stale recap
+            if showRecap, Date().timeIntervalSince(recapCreatedAt) > Self.recapStaleInterval {
+                dismissRecap()
+            }
+            // Re-handle a start command that arrived while backgrounded
+            if !engine.isWorkoutRunning, let cmd = connectivity.receivedCommand,
+               case .start = cmd {
+                handleCommand(cmd)
+            }
         }
     }
     
@@ -83,15 +108,6 @@ struct WatchWorkoutView: View {
                 recapData = nil
                 heartRateReadings = []
                 sessionElapsed = 0
-            }
-        }
-        .onChange(of: connectivity.receivedCommand) { _, command in
-            handleCommand(command)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active, let cmd = connectivity.receivedCommand,
-               case .start = cmd {
-                handleCommand(cmd)
             }
         }
     }
@@ -329,16 +345,8 @@ struct WatchWorkoutView: View {
                 lastHealthDataSend = Date()
             }
         }
-        .onChange(of: connectivity.receivedCommand) { _, command in
-            handleCommand(command)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
-                engine.recalculateOnWake()
-            }
-        }
     }
-    
+
     // MARK: - Recap View
     
     private func watchRecapView(_ recap: WorkoutRecap) -> some View {
@@ -511,7 +519,8 @@ struct WatchWorkoutView: View {
         engine.stopWorkout()
         connectivity.sendWorkoutCommand(.stop)
         Task { await healthKit.endWorkout() }
-        
+
+        recapCreatedAt = Date()
         showRecap = true
     }
     
@@ -542,6 +551,10 @@ struct WatchWorkoutView: View {
         
         switch command {
         case .start(let exerciseList, let hkEnabled, let actType):
+            // A new workout always dismisses any leftover recap
+            showRecap = false
+            recapData = nil
+            heartRateReadings = []
             engine.startWorkout(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
             workoutStartDate = Date()
             sessionElapsed = 0
@@ -579,6 +592,7 @@ struct WatchWorkoutView: View {
                             calories: healthKit.activeCalories,
                             completedNaturally: true
                         )
+                        recapCreatedAt = Date()
                         showRecap = true
                     }
                 }
@@ -609,9 +623,14 @@ struct WatchWorkoutView: View {
             )
             engine.stopWorkout()
             Task { await healthKit.endWorkout() }
+            recapCreatedAt = Date()
             showRecap = true
 
         case .wake:
+            // iPhone is initiating a new workout — clear any leftover recap
+            if showRecap, !engine.isWorkoutRunning {
+                dismissRecap()
+            }
             if connectivity.receivedHealthKitEnabled {
                 let actType = connectivity.receivedActivityType
                 Task {

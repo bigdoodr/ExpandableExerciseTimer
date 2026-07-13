@@ -62,6 +62,23 @@ struct ExerciseListView: View {
     private let exercisesDefaultsKey = "savedExercises"
     private let savedRoutinesKey = "savedRoutines"
     private let pendingRoutineKey = "pendingRoutineStart"
+
+    /// HealthKit params forwarded to WatchSearchView (which launches the watch app)
+    private var watchSearchHealthKitEnabled: Bool {
+#if os(iOS)
+        enableHealthKitTracking
+#else
+        false
+#endif
+    }
+
+    private var watchSearchActivityType: String? {
+#if os(iOS)
+        enableHealthKitTracking ? selectedActivityType.rawValue : nil
+#else
+        nil
+#endif
+    }
     
     var body: some View {
         NavigationStack {
@@ -206,7 +223,9 @@ struct ExerciseListView: View {
                 WatchSearchView(
                     exercises: exercises,
                     isPresented: $isSearchingForWatch,
-                    isWorkoutActive: $isWorkoutActive
+                    isWorkoutActive: $isWorkoutActive,
+                    healthKitEnabled: watchSearchHealthKitEnabled,
+                    activityType: watchSearchActivityType
                 )
                 .environmentObject(connectivity)
             }
@@ -2076,6 +2095,8 @@ struct WatchSearchView: View {
     let exercises: [Exercise]
     @Binding var isPresented: Bool
     @Binding var isWorkoutActive: Bool
+    var healthKitEnabled: Bool = false
+    var activityType: String? = nil
 
     @EnvironmentObject private var connectivity: WatchConnectivityManager
     @State private var countdown = 30
@@ -2154,10 +2175,14 @@ struct WatchSearchView: View {
         }
         .onAppear {
             watchFound = connectivity.isWatchReachable
-            // Send a message to wake the watch app so the user doesn't have to open it manually.
-            // sendWorkoutCommand uses sendMessage when the watch is reachable, which launches
-            // the watch extension in the background (visible on next wrist raise).
+            // If the watch app is already running, .wake tells it to prepare its HK session.
+            // (sendMessage from iPhone→watch cannot LAUNCH the watch app — it only delivers
+            // when the watch app is already reachable.)
             WatchConnectivityManager.shared.sendWorkoutCommand(.wake)
+            // Actually launch the watch app. HKHealthStore.startWatchApp(with:) is the only
+            // API that launches the watch app from the iPhone; it delivers the configuration
+            // to WatchAppDelegate.handle(_:) on the watch.
+            launchWatchApp()
         }
         .onChange(of: connectivity.isWatchReachable) { _, reachable in
             if reachable { watchFound = true }
@@ -2185,6 +2210,27 @@ struct WatchSearchView: View {
 #endif
         isPresented = false
         isWorkoutActive = true
+    }
+
+    /// Launches the companion watch app on the paired Apple Watch.
+    private func launchWatchApp() {
+#if os(iOS) && canImport(HealthKit)
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        let config = HealthKitWorkoutManager.workoutConfiguration(for: activityType)
+        Task { @MainActor in
+            // Ensure iPhone-side HealthKit authorization when tracking is on
+            if healthKitEnabled {
+                await HealthKitWorkoutManager.shared.requestAuthorization()
+            }
+            HealthKitWorkoutManager.shared.healthStore.startWatchApp(with: config) { success, error in
+                if let error {
+                    print("startWatchApp failed: \(error.localizedDescription)")
+                } else if !success {
+                    print("startWatchApp reported failure (watch app may not be installed)")
+                }
+            }
+        }
+#endif
     }
 }
 #endif

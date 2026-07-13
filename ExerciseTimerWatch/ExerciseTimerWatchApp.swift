@@ -26,9 +26,13 @@ struct ExerciseTimerWatchApp: App {
 }
 
 final class WatchAppDelegate: NSObject, WKApplicationDelegate {
+    /// Called when the iPhone launches this app via HKHealthStore.startWatchApp(with:).
+    /// Only PREPARE the session here — the user hasn't tapped Start yet, and preparing
+    /// keeps the app surfaced on wrist raise. startWorkoutSession() reuses the
+    /// .prepared session when the workout actually begins.
     func handle(_ workoutConfiguration: HKWorkoutConfiguration) {
         Task { @MainActor in
-            await HealthKitWorkoutManager.shared.startWorkoutSession(with: workoutConfiguration)
+            await HealthKitWorkoutManager.shared.prepareWorkoutSession(with: workoutConfiguration)
         }
     }
 }
