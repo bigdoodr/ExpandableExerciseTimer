@@ -189,7 +189,14 @@ struct ExerciseListView: View {
         }
 #endif
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { checkPendingRoutine() }
+            if phase == .active {
+                checkPendingRoutine()
+#if os(iOS) && canImport(HealthKit)
+                if enableHealthKitTracking {
+                    Task { await HealthKitWorkoutManager.shared.requestAuthorization() }
+                }
+#endif
+            }
         }
         .sheet(isPresented: $showRoutineSheet) {
             RoutineManagerSheet(
@@ -869,6 +876,9 @@ struct WorkoutView: View {
     @State private var recapCompletedNaturally = false
     @State private var heartRateReadings: [Double] = []
     @State private var sessionElapsed: TimeInterval = 0
+#if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
+    @State private var iPhoneOwnsHKSession = false
+#endif
     
     let audioEngine = AVAudioEngine()
     /// Retained reference for completion sound so AVAudioPlayer isn't deallocated mid-play
@@ -1129,12 +1139,23 @@ struct WorkoutView: View {
                 startBackgroundAudioLoop()
             }
 #endif
-            // iPhone always drives timers — watch owns HealthKit session
             workoutStartDate = Date()
             requestNotificationPermission()
             startCurrentPhase()
 #if canImport(UIKit)
             UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
+#endif
+#if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
+            if healthKitEnabled && !connectivity.isWatchReachable {
+                Task {
+                    await healthKitManager.requestAuthorization()
+                    if healthKitManager.isAuthorized {
+                        let config = HealthKitWorkoutManager.workoutConfiguration(for: activityType.rawValue)
+                        await healthKitManager.startWorkoutSession(with: config)
+                        iPhoneOwnsHKSession = true
+                    }
+                }
+            }
 #endif
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -1420,7 +1441,12 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendWorkoutCommand(.stop)
 #endif
-        // Watch owns HealthKit session — it will end when it receives .stop
+#if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
+        if iPhoneOwnsHKSession {
+            iPhoneOwnsHKSession = false
+            Task { await healthKitManager.endWorkout() }
+        }
+#endif
         if audioEngine.isRunning { audioEngine.stop() }
 #if canImport(UIKit)
         UIApplication.shared.isIdleTimerDisabled = false
@@ -2205,7 +2231,7 @@ struct WatchSearchView: View {
     private func continueOnIPhone() {
 #if canImport(HealthKit)
         WatchConnectivityManager.shared.sendWorkoutCommand(
-            .start(exercises: exercises, healthKitEnabled: false, activityType: nil)
+            .start(exercises: exercises, healthKitEnabled: healthKitEnabled, activityType: activityType)
         )
 #endif
         isPresented = false
