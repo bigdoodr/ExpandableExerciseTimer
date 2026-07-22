@@ -1465,6 +1465,9 @@ struct WorkoutView: View {
         } else {
             // Rep-based: no countdown; nothing to schedule
             timeRemaining = 0
+#if canImport(WatchConnectivity)
+            sendStateToWatch()
+#endif
             return
         }
         phaseEndDate = Date().addingTimeInterval(duration)
