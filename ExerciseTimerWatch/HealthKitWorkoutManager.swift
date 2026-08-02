@@ -136,17 +136,21 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
 
             // Use the person's preferred HR zone config from Health Settings automatically.
             // Only set a custom fallback (5-zone, 220-age boundaries) if no preferred config exists.
-            let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
-            if (try? await builder.zoneConfiguration(for: hrType)) == nil {
-                let bpm = HKUnit.count().unitDivided(by: .minute())
-                let maxHR = maxHeartRate
-                let boundaries = [0.50, 0.60, 0.70, 0.85].map {
-                    HKQuantity(unit: bpm, doubleValue: maxHR * $0)
+            // Guarded: zoneConfiguration(for:), setCustomZoneConfiguration, and
+            // HKWorkoutZoneConfiguration are all new in watchOS 27.
+            if #available(watchOS 27.0, *) {
+                let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+                if (try? await builder.zoneConfiguration(for: hrType)) == nil {
+                    let bpm = HKUnit.count().unitDivided(by: .minute())
+                    let maxHR = maxHeartRate
+                    let boundaries = [0.50, 0.60, 0.70, 0.85].map {
+                        HKQuantity(unit: bpm, doubleValue: maxHR * $0)
+                    }
+                    try? await builder.setCustomZoneConfiguration(
+                        HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
+                        for: hrType
+                    )
                 }
-                try? await builder.setCustomZoneConfiguration(
-                    HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
-                    for: hrType
-                )
             }
 
             let startDate = Date()
@@ -354,6 +358,7 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
 
     /// Fires when the person's HR crosses a zone boundary during an active workout.
     /// Publishes the new zero-based zone index so the view can update the display and play haptics.
+    @available(watchOS 27.0, *)
     nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
                                      didUpdateWorkoutZone zoneUpdate: HKLiveWorkoutBuilder.ZoneUpdate) {
         let newIndex = zoneUpdate.newZoneDuration?.zone.index
