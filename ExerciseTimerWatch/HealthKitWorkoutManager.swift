@@ -360,7 +360,7 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
     /// Publishes the new zero-based zone index so the view can update the display and play haptics.
     @available(watchOS 27.0, *)
     nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
-                                     didUpdateWorkoutZone zoneUpdate: HKLiveWorkoutBuilder.ZoneUpdate) {
+                                     didUpdateWorkoutZone zoneUpdate: HKLiveWorkoutZoneUpdate) {
         let newIndex = zoneUpdate.newZoneDuration?.zone.index
         Task { @MainActor in
             self.currentHRZoneIndex = newIndex
