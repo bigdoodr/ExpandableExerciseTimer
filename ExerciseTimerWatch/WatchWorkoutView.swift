@@ -69,6 +69,11 @@ struct WatchWorkoutView: View {
                 handleCommand(cmd)
             }
         }
+        // Haptic feedback when the person crosses an HR zone boundary.
+        .onChange(of: healthKit.currentHRZoneIndex) { oldZone, newZone in
+            guard oldZone != nil || newZone != nil, oldZone != newZone else { return }
+            WKInterfaceDevice.current().play(.notification)
+        }
     }
     
     // MARK: - Waiting View
@@ -232,11 +237,11 @@ struct WatchWorkoutView: View {
                                     Text("BPM")
                                         .font(.system(size: 8))
                                         .foregroundStyle(.secondary)
-                                    // HR Zone
-                                    if let zone = HRZone.zone(for: healthKit.heartRate, maxHR: healthKit.maxHeartRate) {
-                                        Text("Z\(zone.number)·\(zone.fuelType)")
+                                    // Live HR zone from HealthKit's native zone tracking
+                                    if let zoneIndex = healthKit.currentHRZoneIndex {
+                                        Text("Z\(zoneIndex + 1)")
                                             .font(.system(size: 8))
-                                            .foregroundStyle(hrZoneColor(zone.number))
+                                            .foregroundStyle(hrZoneColor(zoneIndex + 1))
                                     }
                                 } else {
                                     Text("--")
@@ -423,6 +428,34 @@ struct WatchWorkoutView: View {
                         Text("\(Int(recap.calories)) CAL")
                             .font(.caption)
                             .bold()
+                    }
+                }
+
+                // Time in HR zone from the completed HKWorkout.
+                // finishedWorkout is set asynchronously after endWorkout() completes,
+                // so the view re-renders once the data arrives.
+                if #available(watchOS 27.0, *) {
+                    if let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+                       let zoneGroups = healthKit.finishedWorkout?.zoneGroupsByType,
+                       let zoneGroup = zoneGroups[hrType],
+                       !zoneGroup.zoneDurations.isEmpty {
+                        Divider()
+                            .padding(.vertical, 4)
+                        Text("Heart Rate Zones")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        ForEach(Array(zoneGroup.zoneDurations.enumerated()), id: \.offset) { index, zoneDuration in
+                            HStack {
+                                Text("Z\(index + 1)")
+                                    .font(.caption2)
+                                    .bold()
+                                    .foregroundStyle(hrZoneColor(index + 1))
+                                    .frame(width: 22, alignment: .leading)
+                                Spacer()
+                                Text(engine.formatTime(zoneDuration.duration))
+                                    .font(.caption2)
+                            }
+                        }
                     }
                 }
                 

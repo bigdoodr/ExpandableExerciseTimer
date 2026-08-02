@@ -14,8 +14,12 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var startError: String?
     @Published var isAuthorized = false
     /// Estimated max heart rate derived from user's date of birth (220 − age).
-    /// Falls back to 185 BPM if DOB is unavailable.
+    /// Falls back to 185 BPM if DOB is unavailable. Used as fallback zone boundary seed.
     @Published var maxHeartRate: Double = 185.0
+    /// Zero-based index of the current HR zone, driven by HealthKit's live zone delegate.
+    @Published var currentHRZoneIndex: Int? = nil
+    /// The finished HKWorkout after endWorkout() completes; provides zoneGroupsByType for recap.
+    @Published var finishedWorkout: HKWorkout? = nil
 
     /// Throttle for forwarding health data to iPhone via WatchConnectivity
     private var lastHealthDataForward: Date = .distantPast
@@ -69,6 +73,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     }
 
     /// Computes max heart rate as 220 − age using the user's HealthKit date of birth.
+    /// Used as the boundary seed when the person has no preferred zone config in Health Settings.
     func fetchMaxHeartRate() {
         do {
             let dob = try healthStore.dateOfBirthComponents()
@@ -102,6 +107,8 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
 
     func startWorkoutSession(with configuration: HKWorkoutConfiguration) async {
         startError = nil
+        finishedWorkout = nil
+        currentHRZoneIndex = nil
 
         do {
             // On watchOS, HKWorkoutSession + HKLiveWorkoutBuilder have been available
@@ -126,6 +133,22 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             )
             builder.delegate = self
             self.liveWorkoutBuilder = builder
+
+            // Use the person's preferred HR zone config from Health Settings automatically.
+            // Only set a custom fallback (5-zone, 220-age boundaries) if no preferred config exists.
+            let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+            if (try? await builder.zoneConfiguration(for: hrType)) == nil {
+                let bpm = HKUnit.count().unitDivided(by: .minute())
+                let maxHR = maxHeartRate
+                let boundaries = [0.50, 0.60, 0.70, 0.85].map {
+                    HKQuantity(unit: bpm, doubleValue: maxHR * $0)
+                }
+                try? await builder.setCustomZoneConfiguration(
+                    HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
+                    for: hrType
+                )
+            }
+
             let startDate = Date()
             session.startActivity(with: startDate)
             try await builder.beginCollection(at: startDate)
@@ -209,6 +232,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         isWorkoutActive = false
         heartRate = 0
         activeCalories = 0
+        currentHRZoneIndex = nil
 
         session?.end()
 
@@ -217,7 +241,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             liveWorkoutBuilder = nil
             do {
                 try await builder.endCollection(at: Date())
-                _ = try await builder.finishWorkout()
+                finishedWorkout = try await builder.finishWorkout()
             } catch {
                 print("Failed to end workout: \(error)")
             }
@@ -325,6 +349,16 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
                 // This ensures metrics arrive even when the watch screen is off.
                 self.forwardHealthDataIfNeeded()
             }
+        }
+    }
+
+    /// Fires when the person's HR crosses a zone boundary during an active workout.
+    /// Publishes the new zero-based zone index so the view can update the display and play haptics.
+    nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
+                                     didUpdateWorkoutZone zoneUpdate: HKLiveWorkoutBuilder.ZoneUpdate) {
+        let newIndex = zoneUpdate.newZoneDuration?.zone.index
+        Task { @MainActor in
+            self.currentHRZoneIndex = newIndex
         }
     }
 }
