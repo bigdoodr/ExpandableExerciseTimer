@@ -336,11 +336,38 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
             guard let quantityType = type as? HKQuantityType else { continue }
             let statistics = workoutBuilder.statistics(for: quantityType)
 
+            // Compute the current HR zone synchronously before dispatching to MainActor
+            // so the builder doesn't need to be captured across actor boundaries.
+            let zoneIndexForHR: Int? = {
+                guard quantityType == HKQuantityType.quantityType(forIdentifier: .heartRate),
+                      let stats = statistics,
+                      let quantity = stats.mostRecentQuantity() else { return nil }
+                let hr = quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+                guard #available(watchOS 27.0, *),
+                      let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+                      let group = workoutBuilder.zoneGroup(for: hrType),
+                      !group.configuration.zones.isEmpty else { return nil }
+                let bpm = HKUnit.count().unitDivided(by: .minute())
+                let zones = group.configuration.zones
+                // Walk from the highest zone down; first zone whose minimum HR meets is current.
+                var idx = 0
+                for i in stride(from: zones.count - 1, through: 1, by: -1) {
+                    if let min = zones[i].minimum, hr >= min.doubleValue(for: bpm) {
+                        idx = i
+                        break
+                    }
+                }
+                return idx
+            }()
+
             Task { @MainActor in
                 switch quantityType {
                 case HKQuantityType.quantityType(forIdentifier: .heartRate):
                     if let statistics, let quantity = statistics.mostRecentQuantity() {
                         self.heartRate = quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
+                    }
+                    if let zoneIdx = zoneIndexForHR {
+                        self.currentHRZoneIndex = zoneIdx
                     }
                 case HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned):
                     if let statistics, let quantity = statistics.sumQuantity() {
@@ -353,17 +380,6 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
                 // This ensures metrics arrive even when the watch screen is off.
                 self.forwardHealthDataIfNeeded()
             }
-        }
-    }
-
-    /// Fires when the person's HR crosses a zone boundary during an active workout.
-    /// Publishes the new zero-based zone index so the view can update the display and play haptics.
-    @available(watchOS 27.0, *)
-    nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
-                                     didUpdateWorkoutZone zoneUpdate: HKLiveWorkoutZoneUpdate) {
-        let newIndex = zoneUpdate.newZoneDuration?.zone.index
-        Task { @MainActor in
-            self.currentHRZoneIndex = newIndex
         }
     }
 }
