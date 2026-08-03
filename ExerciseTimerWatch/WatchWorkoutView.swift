@@ -225,7 +225,7 @@ struct WatchWorkoutView: View {
                         .padding(.vertical, 4)
                     
                     if healthKit.isWorkoutActive {
-                        HStack(spacing: 16) {
+                        HStack(spacing: 12) {
                             VStack(spacing: 2) {
                                 Image(systemName: "heart.fill")
                                     .foregroundStyle(.red)
@@ -237,12 +237,6 @@ struct WatchWorkoutView: View {
                                     Text("BPM")
                                         .font(.system(size: 8))
                                         .foregroundStyle(.secondary)
-                                    // Live HR zone from HealthKit's native zone tracking
-                                    if let zoneIndex = healthKit.currentHRZoneIndex {
-                                        Text("Z\(zoneIndex + 1)")
-                                            .font(.system(size: 8))
-                                            .foregroundStyle(hrZoneColor(zoneIndex + 1))
-                                    }
                                 } else {
                                     Text("--")
                                         .font(.caption)
@@ -252,6 +246,25 @@ struct WatchWorkoutView: View {
                                         .font(.system(size: 8))
                                         .foregroundStyle(.secondary)
                                 }
+                            }
+                            VStack(spacing: 2) {
+                                Image(systemName: "waveform.path.ecg")
+                                    .foregroundStyle(healthKit.currentHRZoneIndex.map { hrZoneColor($0 + 1) } ?? .secondary)
+                                    .font(.caption)
+                                if let zoneIndex = healthKit.currentHRZoneIndex {
+                                    Text("Z\(zoneIndex + 1)")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundStyle(hrZoneColor(zoneIndex + 1))
+                                } else {
+                                    Text("--")
+                                        .font(.caption)
+                                        .bold()
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("ZONE")
+                                    .font(.system(size: 8))
+                                    .foregroundStyle(.secondary)
                             }
                             VStack(spacing: 2) {
                                 Image(systemName: "flame.fill")

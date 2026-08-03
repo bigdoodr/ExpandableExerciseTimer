@@ -256,7 +256,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             liveWorkoutBuilder = nil
             do {
                 try await builder.endCollection(at: Date())
-                _ = try await builder.finishWorkout()
+                finishedWorkout = try await builder.finishWorkout()
             } catch {
                 print("Failed to end workout: \(error)")
             }
@@ -336,38 +336,33 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
             guard let quantityType = type as? HKQuantityType else { continue }
             let statistics = workoutBuilder.statistics(for: quantityType)
 
-            // Compute the current HR zone synchronously before dispatching to MainActor
-            // so the builder doesn't need to be captured across actor boundaries.
-            let zoneIndexForHR: Int? = {
-                guard quantityType == HKQuantityType.quantityType(forIdentifier: .heartRate),
-                      let stats = statistics,
-                      let quantity = stats.mostRecentQuantity() else { return nil }
-                let hr = quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
-                guard #available(watchOS 27.0, *),
-                      let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
-                      let group = workoutBuilder.zoneGroup(for: hrType),
-                      !group.configuration.zones.isEmpty else { return nil }
-                let bpm = HKUnit.count().unitDivided(by: .minute())
-                let zones = group.configuration.zones
-                // Walk from the highest zone down; first zone whose minimum HR meets is current.
-                var idx = 0
-                for i in stride(from: zones.count - 1, through: 1, by: -1) {
-                    if let min = zones[i].minimum, hr >= min.doubleValue(for: bpm) {
-                        idx = i
-                        break
-                    }
-                }
-                return idx
-            }()
-
             Task { @MainActor in
                 switch quantityType {
                 case HKQuantityType.quantityType(forIdentifier: .heartRate):
                     if let statistics, let quantity = statistics.mostRecentQuantity() {
                         self.heartRate = quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
                     }
-                    if let zoneIdx = zoneIndexForHR {
-                        self.currentHRZoneIndex = zoneIdx
+                    // Derive current zone on @MainActor using the stored builder so
+                    // zoneGroup(for:) is called on the correct thread (previously calling
+                    // it from a nonisolated context caused intermittent nil returns that
+                    // left the zone stuck at Z1 after first entering it).
+                    if #available(watchOS 27.0, *),
+                       let builder = self.liveWorkoutBuilder as? HKLiveWorkoutBuilder,
+                       let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+                       let group = builder.zoneGroup(for: hrType),
+                       !group.configuration.zones.isEmpty {
+                        let bpm = HKUnit.count().unitDivided(by: .minute())
+                        let zones = group.configuration.zones
+                        // Walk zones low→high; enter the first zone whose maximum exceeds HR.
+                        // Zone maximums are always set except for the last (highest) zone.
+                        var idx = zones.count - 1
+                        for (i, zone) in zones.enumerated() {
+                            if let max = zone.maximum, self.heartRate < max.doubleValue(for: bpm) {
+                                idx = i
+                                break
+                            }
+                        }
+                        self.currentHRZoneIndex = idx
                     }
                 case HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned):
                     if let statistics, let quantity = statistics.sumQuantity() {

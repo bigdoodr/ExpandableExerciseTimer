@@ -1272,6 +1272,18 @@ struct WorkoutView: View {
                             recapRow(icon: "flame.fill", color: .orange,
                                      label: "Calories", value: "\(Int(recapCalories)) CAL")
                         }
+                        if #available(iOS 27.0, *),
+                           let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+                           let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
+                           let zoneGroup = zoneGroups[hrType],
+                           !zoneGroup.zoneDurations.isEmpty {
+                            Divider()
+                            ForEach(Array(zoneGroup.zoneDurations.enumerated()), id: \.offset) { index, zd in
+                                if index > 0 { Divider() }
+                                recapRow(icon: "circle.fill", color: hrZoneColor(index + 1),
+                                         label: "Zone \(index + 1)", value: formatTime(zd.duration))
+                            }
+                        }
 #endif
                     }
                     .padding()
