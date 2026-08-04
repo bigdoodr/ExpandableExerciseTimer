@@ -1272,6 +1272,7 @@ struct WorkoutView: View {
                             recapRow(icon: "flame.fill", color: .orange,
                                      label: "Calories", value: "\(Int(recapCalories)) CAL")
                         }
+#if os(iOS)
                         if #available(iOS 27.0, *),
                            let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
                            let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
@@ -1284,6 +1285,7 @@ struct WorkoutView: View {
                                          label: "Zone \(index + 1)", value: formatTime(zd.duration))
                             }
                         }
+#endif
 #endif
                     }
                     .padding()
