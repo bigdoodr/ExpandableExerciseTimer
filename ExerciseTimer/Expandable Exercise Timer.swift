@@ -1278,11 +1278,62 @@ struct WorkoutView: View {
                            let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
                            let zoneGroup = zoneGroups[hrType],
                            !zoneGroup.zoneDurations.isEmpty {
+                            let totalZoneTime = zoneGroup.zoneDurations.reduce(0.0) { $0 + $1.duration }
+                            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
                             Divider()
+                            Text("Heart Rate Zones")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             ForEach(Array(zoneGroup.zoneDurations.enumerated()), id: \.offset) { index, zd in
                                 if index > 0 { Divider() }
-                                recapRow(icon: "circle.fill", color: hrZoneColor(index + 1),
-                                         label: "Zone \(index + 1)", value: formatTime(zd.duration))
+                                let zoneNum = index + 1
+                                let color = hrZoneColor(zoneNum)
+                                let minBPM = zd.zone.minimum.map { Int($0.doubleValue(for: bpmUnit)) }
+                                let maxBPM = zd.zone.maximum.map { Int($0.doubleValue(for: bpmUnit)) }
+                                let bpmLabel: String = {
+                                    switch (minBPM, maxBPM) {
+                                    case (nil, let hi?): return "<\(hi) bpm"
+                                    case (let lo?, nil): return ">\(lo) bpm"
+                                    case (let lo?, let hi?): return "\(lo)–\(hi) bpm"
+                                    default: return ""
+                                    }
+                                }()
+                                VStack(spacing: 6) {
+                                    HStack(spacing: 10) {
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(color)
+                                            .frame(width: 4, height: 20)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Zone \(zoneNum)")
+                                                .font(.subheadline)
+                                            if !bpmLabel.isEmpty {
+                                                Text(bpmLabel)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        Spacer()
+                                        Text(formatTime(zd.duration))
+                                            .font(.subheadline)
+                                            .bold()
+                                            .foregroundStyle(zd.duration > 0 ? .primary : .secondary)
+                                            .monospacedDigit()
+                                    }
+                                    GeometryReader { geo in
+                                        ZStack(alignment: .leading) {
+                                            RoundedRectangle(cornerRadius: 3)
+                                                .fill(Color.secondary.opacity(0.2))
+                                                .frame(height: 6)
+                                            if totalZoneTime > 0 && zd.duration > 0 {
+                                                RoundedRectangle(cornerRadius: 3)
+                                                    .fill(color)
+                                                    .frame(width: geo.size.width * CGFloat(zd.duration / totalZoneTime), height: 6)
+                                            }
+                                        }
+                                    }
+                                    .frame(height: 6)
+                                }
                             }
                         }
 #endif
