@@ -387,7 +387,7 @@ extension HealthKitWorkoutManager {
         guard now.timeIntervalSince(lastHealthDataForward) >= 2.0 else { return }
         lastHealthDataForward = now
         WatchConnectivityManager.shared.sendWorkoutCommand(
-            .healthData(heartRate: heartRate, activeCalories: activeCalories)
+            .healthData(heartRate: heartRate, activeCalories: activeCalories, hrZoneIndex: currentHRZoneIndex)
         )
     }
 }

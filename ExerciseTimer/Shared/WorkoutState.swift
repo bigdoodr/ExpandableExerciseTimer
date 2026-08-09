@@ -9,7 +9,7 @@ enum WorkoutCommand: Codable, Equatable {
     case pause
     case resume
     case stop
-    case healthData(heartRate: Double, activeCalories: Double)
+    case healthData(heartRate: Double, activeCalories: Double, hrZoneIndex: Int?)
     /// Sent from watch to iPhone when user completes a rep-based set
     case repsComplete
     /// Sent from iPhone to watch to wake the watch app; watch calls session.prepare() so it surfaces on wrist raise

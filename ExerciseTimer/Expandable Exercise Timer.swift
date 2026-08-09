@@ -1421,10 +1421,11 @@ struct WorkoutView: View {
             // Watch user tapped "Reps Complete" — advance and send state back
             repsCompleteTapped()
             
-        case .healthData(let heartRate, let activeCalories):
+        case .healthData(let heartRate, let activeCalories, let hrZoneIndex):
             // Receive live health data forwarded from the watch
             healthKitManager.heartRate = heartRate
             healthKitManager.activeCalories = activeCalories
+            healthKitManager.currentHRZoneIndex = hrZoneIndex
             // Accumulate for average calculation in recap
             if heartRate > 0 {
                 heartRateReadings.append(heartRate)
@@ -1707,10 +1708,15 @@ struct WorkoutView: View {
             
             HStack(spacing: 20) {
                 heartRateMetric
-                
+
                 Divider()
                     .frame(height: 60)
-                
+
+                zoneMetric
+
+                Divider()
+                    .frame(height: 60)
+
                 caloriesMetric
             }
         }
@@ -1738,17 +1744,28 @@ struct WorkoutView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let zone = HRZone.zone(for: healthKitManager.heartRate, maxHR: healthKitManager.maxHeartRate) {
-                    HStack(spacing: 4) {
-                        Text("Zone \(zone.number)")
-                            .bold()
-                        Text("·")
-                            .foregroundStyle(.secondary)
-                        Text(zone.fuelType)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(hrZoneColor(zone.number))
-                }
+            } else {
+                Text("--")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var zoneMetric: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "waveform.path.ecg")
+                    .foregroundStyle(healthKitManager.currentHRZoneIndex.map { hrZoneColor($0 + 1) } ?? .secondary)
+                Text("Zone")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            if let zoneIndex = healthKitManager.currentHRZoneIndex {
+                Text("Z\(zoneIndex + 1)")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundStyle(hrZoneColor(zoneIndex + 1))
             } else {
                 Text("--")
                     .font(.system(size: 36, weight: .bold, design: .rounded))
