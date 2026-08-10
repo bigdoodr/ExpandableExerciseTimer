@@ -1781,7 +1781,7 @@ struct WorkoutView: View {
             HStack(spacing: 4) {
                 Image(systemName: "heart.fill")
                     .foregroundStyle(.red)
-                Text("Heart Rate")
+                Text("BPM")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -1791,9 +1791,6 @@ struct WorkoutView: View {
                     Text("\(Int(healthKitManager.heartRate))")
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                    Text("BPM")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             } else {
                 Text("--")
@@ -1851,9 +1848,6 @@ struct WorkoutView: View {
                     Text("\(Int(healthKitManager.activeCalories))")
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                    Text("CAL")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             } else {
                 Text("--")
