@@ -56,12 +56,39 @@ struct ExerciseListView: View {
 #if canImport(WatchConnectivity)
     @State private var isSearchingForWatch = false
 #endif
-    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "hasSeenOnboarding")
+    @State private var showOnboarding = false
+    @State private var onboardingMode: OnboardingView.Mode = .full
     @Environment(\.scenePhase) private var scenePhase
 
     private let exercisesDefaultsKey = "savedExercises"
     private let savedRoutinesKey = "savedRoutines"
     private let pendingRoutineKey = "pendingRoutineStart"
+    private let hasSeenOnboardingKey = "hasSeenOnboarding"
+    private let lastSeenAppVersionKey = "lastSeenAppVersion"
+
+    private var currentAppVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+    }
+
+    /// Shows the full guide on first launch, or a condensed "What's New" pass after an app update.
+    private func presentOnboardingIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: hasSeenOnboardingKey) else {
+            onboardingMode = .full
+            showOnboarding = true
+            return
+        }
+        if defaults.string(forKey: lastSeenAppVersionKey) != currentAppVersion {
+            onboardingMode = .whatsNew
+            showOnboarding = true
+        }
+    }
+
+    private func markOnboardingSeen() {
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: hasSeenOnboardingKey)
+        defaults.set(currentAppVersion, forKey: lastSeenAppVersionKey)
+    }
 
     /// HealthKit params forwarded to WatchSearchView (which launches the watch app)
     private var watchSearchHealthKitEnabled: Bool {
@@ -176,6 +203,7 @@ struct ExerciseListView: View {
             }
             loadSavedRoutines()
             checkPendingRoutine()
+            presentOnboardingIfNeeded()
         }
         .onChange(of: exercises) { _, _ in
             persistExercises()
@@ -202,8 +230,9 @@ struct ExerciseListView: View {
             RoutineManagerSheet(
                 savedRoutines: $savedRoutines,
                 currentExercises: exercises,
-                onLoad: { routine in
-                    exercises = routine.exercises
+                onLoad: { loadedExercises in
+                    exercises = loadedExercises
+                    normalizeSupersets()
                     showRoutineSheet = false
                 },
                 onSaved: { updated in
@@ -239,9 +268,9 @@ struct ExerciseListView: View {
         }
 #endif
         .sheet(isPresented: $showOnboarding, onDismiss: {
-            UserDefaults.standard.set(true, forKey: "hasSeenOnboarding")
+            markOnboardingSeen()
         }) {
-            OnboardingView()
+            OnboardingView(mode: onboardingMode)
         }
     }
     
@@ -249,10 +278,26 @@ struct ExerciseListView: View {
     private var exerciseListSection: some View {
         Section {
             ForEach(Array(exercises.indices), id: \.self) { index in
-                ExerciseEntryRow(exercise: $exercises[index])
+                let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
+                ExerciseEntryRow(exercise: $exercises[index], isSupersetAnchor: isAnchor)
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        if index > 0 {
+                            Button {
+                                exercises[index].isSupersetContinuation.toggle()
+                                normalizeSupersets()
+                            } label: {
+                                Label(
+                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset",
+                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
+                                )
+                            }
+                            .tint(.purple)
+                        }
+                    }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             exercises.remove(at: index)
+                            normalizeSupersets()
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -273,17 +318,47 @@ struct ExerciseListView: View {
                         } label: {
                             Label("Duplicate", systemImage: "plus.square.on.square")
                         }
+                        if index > 0 {
+                            Button {
+                                exercises[index].isSupersetContinuation.toggle()
+                                normalizeSupersets()
+                            } label: {
+                                Label(
+                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset with Previous",
+                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
+                                )
+                            }
+                        }
                     }
             }
             .onMove { (indices: IndexSet, newOffset: Int) in
                 exercises.move(fromOffsets: indices, toOffset: newOffset)
+                normalizeSupersets()
             }
             .onDelete { (indexSet: IndexSet) in
                 exercises.remove(atOffsets: indexSet)
+                normalizeSupersets()
             }
         }
     }
-    
+
+    /// Enforces the superset invariants after any edit to the exercise list:
+    /// - A superset marker on the first exercise means "linked to nothing" — not valid.
+    /// - An exercise immediately followed by a superset continuation has no rest of its own
+    ///   (rest lives on the chain's last exercise instead).
+    private func normalizeSupersets() {
+        guard exercises.indices.contains(0) else { return }
+        if exercises[0].isSupersetContinuation {
+            exercises[0].isSupersetContinuation = false
+        }
+        for index in exercises.indices {
+            let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
+            if isAnchor && exercises[index].restDuration != 0 {
+                exercises[index].restDuration = 0
+            }
+        }
+    }
+
     @ViewBuilder
     private var addExerciseSection: some View {
         Section {
@@ -374,6 +449,19 @@ struct ExerciseListView: View {
                 .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+
+            Button(action: {
+                onboardingMode = .full
+                showOnboarding = true
+            }) {
+                HStack {
+                    Image(systemName: "questionmark.circle")
+                    Text("View Onboarding Guide")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -416,9 +504,10 @@ struct ExerciseListView: View {
     // Helper row to reduce type-checker load
     private struct ExerciseEntryRow: View {
         @Binding var exercise: Exercise
+        var isSupersetAnchor: Bool = false
 
         var body: some View {
-            ExerciseEntryView(exercise: $exercise)
+            ExerciseEntryView(exercise: $exercise, isSupersetAnchor: isSupersetAnchor)
 #if os(macOS)
                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
 #endif
@@ -444,6 +533,7 @@ struct ExerciseListView: View {
             let data = try Data(contentsOf: url)
             let decoded = try JSONDecoder().decode([Exercise].self, from: data)
             exercises = decoded
+            normalizeSupersets()
             persistExercises()
         } catch {
             print("Failed to import: \(error)")
@@ -454,6 +544,7 @@ struct ExerciseListView: View {
         if let data = UserDefaults.standard.data(forKey: exercisesDefaultsKey) {
             if let decoded = try? JSONDecoder().decode([Exercise].self, from: data) {
                 exercises = decoded
+                normalizeSupersets()
             }
         }
     }
@@ -490,6 +581,7 @@ struct ExerciseListView: View {
               let routine = savedRoutines.first(where: { $0.id == uuid }) else { return }
         UserDefaults.standard.removeObject(forKey: pendingRoutineKey)
         exercises = routine.exercises
+        normalizeSupersets()
 #if canImport(WatchConnectivity)
         isSearchingForWatch = true
 #else
@@ -506,6 +598,7 @@ struct ExerciseListView: View {
         case .start(let exerciseList, _, _):
             // Watch is starting a workout — iPhone drives timers
             exercises = exerciseList
+            normalizeSupersets()
 #if canImport(WatchConnectivity)
             isSearchingForWatch = false
 #endif
@@ -521,8 +614,31 @@ struct ExerciseListView: View {
 
 struct ExerciseEntryView: View {
     @Binding var exercise: Exercise
+    /// True when the *next* exercise in the list continues a superset with this one — meaning this exercise has no rest of its own.
+    var isSupersetAnchor: Bool = false
     @State private var isExpanded = false
-    
+
+    /// True when this exercise starts a multi-exercise superset chain — it owns the chain's repeat count
+    /// instead of its own Number of Sets.
+    private var isChainHead: Bool {
+        isSupersetAnchor && !exercise.isSupersetContinuation
+    }
+
+    /// True for every exercise in a chain except the first — its own Number of Sets doesn't apply,
+    /// since chain members each perform one set per round.
+    private var isGroupedNonHead: Bool {
+        exercise.isSupersetContinuation
+    }
+
+    @ViewBuilder
+    private var supersetBadge: some View {
+        if exercise.isSupersetContinuation {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.caption)
+                .foregroundStyle(.purple)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
 #if os(macOS)
@@ -532,6 +648,7 @@ struct ExerciseEntryView: View {
                     .font(.callout)
                     .frame(width: 20)
                 HStack {
+                    supersetBadge
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     Text(exercise.name.isEmpty ? "New Exercise" : exercise.name)
                         .font(.headline)
@@ -539,7 +656,8 @@ struct ExerciseEntryView: View {
                 }
                 .foregroundStyle(.primary)
                 .padding()
-                .background(Color(nsColor: .windowBackgroundColor))
+                .padding(.leading, exercise.isSupersetContinuation ? 16 : 0)
+                .background(exercise.isSupersetContinuation ? Color.purple.opacity(0.12) : Color(nsColor: .windowBackgroundColor))
                 .cornerRadius(12)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -550,6 +668,7 @@ struct ExerciseEntryView: View {
             }
 #else
             HStack {
+                supersetBadge
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 Text(exercise.name.isEmpty ? "New Exercise" : exercise.name)
                     .font(.headline)
@@ -557,10 +676,11 @@ struct ExerciseEntryView: View {
             }
             .foregroundStyle(.primary)
             .padding()
+            .padding(.leading, exercise.isSupersetContinuation ? 16 : 0)
 #if os(iOS)
-            .background(Color(uiColor: .systemGray6))
+            .background(exercise.isSupersetContinuation ? Color.purple.opacity(0.12) : Color(uiColor: .systemGray6))
 #else
-            .background(Color.gray.opacity(0.15))
+            .background(exercise.isSupersetContinuation ? Color.purple.opacity(0.12) : Color.gray.opacity(0.15))
 #endif
             .cornerRadius(12)
             .contentShape(Rectangle())
@@ -591,14 +711,40 @@ struct ExerciseEntryView: View {
                         }
                         .pickerStyle(.segmented)
                     }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Number of Sets")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Stepper("\(exercise.sets)", value: $exercise.sets, in: 1...99)
+
+                    if isChainHead {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "repeat")
+                                    .font(.caption)
+                                    .foregroundStyle(.purple)
+                                Text("Repeat Chain")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Stepper("\(exercise.chainRepeatCount) round\(exercise.chainRepeatCount == 1 ? "" : "s")", value: $exercise.chainRepeatCount, in: 1...99)
+                            Text("Each linked exercise performs one set per round.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if isGroupedNonHead {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Number of Sets")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text("Performed once per round — set the round count on the first exercise in this chain.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Number of Sets")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Stepper("\(exercise.sets)", value: $exercise.sets, in: 1...99)
+                        }
                     }
-                    
+
                     if exercise.isTimeBased {
                         DurationPickerView(title: "Exercise Duration", duration: $exercise.exerciseDuration)
                     } else {
@@ -626,7 +772,27 @@ struct ExerciseEntryView: View {
                         }
                     }
 
-                    DurationPickerView(title: "Rest Duration", duration: $exercise.restDuration)
+                    if isSupersetAnchor {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Rest Duration")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                Image(systemName: "link")
+                                    .foregroundStyle(.purple)
+                                Text("No rest — continues straight into the linked superset exercise.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.purple.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    } else {
+                        DurationPickerView(title: "Rest Duration", duration: $exercise.restDuration)
+                    }
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Weight")
@@ -895,7 +1061,13 @@ struct WorkoutView: View {
         let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
         return exercises[safeIndex]
     }
-    
+
+    /// The superset group containing the current exercise — a single-element range for a lone exercise.
+    var currentGroupRange: ClosedRange<Int> {
+        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
+        return exercises.supersetGroupRange(containing: safeIndex)
+    }
+
     var displayExerciseNumber: Int {
         guard !exercises.isEmpty else { return 0 }
         let idx = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
@@ -905,54 +1077,55 @@ struct WorkoutView: View {
     
     var upNextText: String {
         guard !isCompleted else { return "" }
-        
+        let groupRange = currentGroupRange
+        let roundCount = exercises.roundCount(for: groupRange)
+
+        func nextExerciseAfterGroupText() -> String {
+            let nextIndex = groupRange.upperBound + 1
+            if nextIndex >= exercises.count {
+                return "Up Next: Workout Complete"
+            }
+            let next = exercises[nextIndex]
+            let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
+            let nextSummary = next.quickSummary
+            return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
+        }
+
         if isResting {
-            // Currently resting. After rest: currentSet increments.
+            // Rest only ever happens after the last exercise in a group finishes a round.
             let nextSet = currentSet + 1
-            if nextSet <= currentExercise.sets {
-                // More sets of the same exercise
-                let name = currentExercise.name.isEmpty ? "Exercise \(displayExerciseNumber)" : currentExercise.name
-                if currentExercise.isTimeBased {
-                    return "Up Next: \(name) – Set \(nextSet)"
+            if nextSet <= roundCount {
+                // Another round — loop back to the first exercise in the group.
+                let first = exercises[groupRange.lowerBound]
+                let name = first.name.isEmpty ? "Exercise \(groupRange.lowerBound + 1)" : first.name
+                if first.isTimeBased {
+                    return "Up Next: \(name) – Round \(nextSet)"
                 } else {
-                    return "Up Next: \(name) – Set \(nextSet) (Reps)"
+                    return "Up Next: \(name) – Round \(nextSet) (Reps)"
                 }
             } else {
-                // All sets done after this rest; move to next exercise
-                let nextIndex = currentExerciseIndex + 1
-                if nextIndex >= exercises.count {
-                    return "Up Next: Workout Complete"
-                } else {
-                    let next = exercises[nextIndex]
-                    let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
-                    let nextSummary = next.quickSummary
-                    return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
-                }
+                return nextExerciseAfterGroupText()
+            }
+        } else if currentExerciseIndex < groupRange.upperBound {
+            // More linked exercises remain this round — no rest before them.
+            let nextIndex = currentExerciseIndex + 1
+            let next = exercises[nextIndex]
+            let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
+            let nextSummary = next.quickSummary
+            return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
+        } else if currentSet < roundCount {
+            // Last exercise in the group, but more rounds remain
+            if currentExercise.restDuration > 0 {
+                return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
+            } else {
+                return "Up Next: Round \(currentSet + 1)"
             }
         } else {
-            // Currently exercising (time-based or rep-based)
-            if currentSet < currentExercise.sets {
-                // More sets remain – rest comes next
-                if currentExercise.restDuration > 0 {
-                    return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
-                } else {
-                    return "Up Next: Set \(currentSet + 1)"
-                }
+            // Final round of the final exercise in the group
+            if currentExercise.restDuration > 0 {
+                return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
             } else {
-                // Last set of current exercise
-                if currentExercise.restDuration > 0 {
-                    return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
-                } else {
-                    let nextIndex = currentExerciseIndex + 1
-                    if nextIndex >= exercises.count {
-                        return "Up Next: Workout Complete"
-                    } else {
-                        let next = exercises[nextIndex]
-                        let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
-                        let nextSummary = next.quickSummary
-                        return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
-                    }
-                }
+                return nextExerciseAfterGroupText()
             }
         }
     }
@@ -994,7 +1167,7 @@ struct WorkoutView: View {
                         .font(.largeTitle)
                         .bold()
 
-                    Text("Set \(currentSet) of \(currentExercise.sets)")
+                    Text(currentGroupRange.count > 1 ? "Round \(currentSet) of \(exercises.roundCount(for: currentGroupRange))" : "Set \(currentSet) of \(currentExercise.sets)")
                         .font(.title2)
                         .foregroundStyle(.secondary)
 
@@ -1256,7 +1429,7 @@ struct WorkoutView: View {
                         
                         Divider()
                         
-                        let totalSets = exercises.reduce(0) { $0 + $1.sets }
+                        let totalSets = exercises.indices.reduce(0) { $0 + effectiveSets(at: $1) }
                         recapRow(icon: "repeat", color: .purple,
                                  label: "Sets", value: "\(recapSetsCompleted) of \(totalSets)")
                         
@@ -1387,21 +1560,37 @@ struct WorkoutView: View {
         }
     }
     
+    /// Effective "sets" for recap purposes: a lone exercise's own `sets`, or a chain member's round count.
+    private func effectiveSets(at index: Int) -> Int {
+        exercises.roundCount(for: exercises.supersetGroupRange(containing: index))
+    }
+
     private func captureRecap(completedNaturally: Bool) {
         recapDuration = Date().timeIntervalSince(workoutStartDate)
         recapCompletedNaturally = completedNaturally
-        
+
         if completedNaturally {
             recapExercisesCompleted = exercises.count
-            recapSetsCompleted = exercises.reduce(0) { $0 + $1.sets }
+            recapSetsCompleted = exercises.indices.reduce(0) { $0 + effectiveSets(at: $1) }
         } else {
             recapExercisesCompleted = min(currentExerciseIndex + 1, exercises.count)
-            // Count sets completed in finished exercises + current exercise
+            // Count sets (rounds) completed in finished groups + the in-progress group
             var sets = 0
-            for i in 0..<currentExerciseIndex {
-                sets += exercises[i].sets
+            let groupRange = currentGroupRange
+            for i in 0..<groupRange.lowerBound {
+                sets += effectiveSets(at: i)
             }
-            sets += max(0, currentSet - (isResting ? 0 : 1))
+            for i in groupRange {
+                if i < currentExerciseIndex {
+                    // Already performed this round for this group member
+                    sets += currentSet
+                } else if i == currentExerciseIndex {
+                    sets += max(0, currentSet - (isResting ? 0 : 1))
+                } else {
+                    // Hasn't performed the in-progress round yet, only prior ones
+                    sets += max(0, currentSet - 1)
+                }
+            }
             recapSetsCompleted = sets
         }
         
@@ -1549,151 +1738,67 @@ struct WorkoutView: View {
         if isCompleted { return }
         cancelPhaseEndNotification()
         playSound()
-        
+
         if isResting {
-            // Completed a rest that belongs to the SAME exercise
             isResting = false
-            currentSet += 1
-            if currentSet > currentExercise.sets {
-                // Finished all sets for this exercise; advance to next exercise
-                currentSet = 1
-                currentExerciseIndex += 1
-                if currentExerciseIndex >= exercises.count {
-                    isCompleted = true
-                    timeRemaining = 0
-#if canImport(WatchConnectivity)
-                    sendStateToWatch()
-#endif
-                    captureRecap(completedNaturally: true)
-                    showRecap = true
-                    return
-                }
-                // Start next exercise phase
-                if exercises[currentExerciseIndex].isTimeBased {
-                    startCurrentPhase()
-                } else {
-                    timeRemaining = 0
-#if canImport(WatchConnectivity)
-                    sendStateToWatch()
-#endif
-                }
-            } else {
-                // Start the next set's exercise for the SAME exercise
-                startCurrentPhase()
-            }
+            advancePastRest(groupRange: currentGroupRange)
         } else {
-            // Exercise just finished
-            if currentSet < currentExercise.sets {
-                // More sets remain in the current exercise: rest for the SAME exercise
-                isResting = true
-                startCurrentPhase()
-            } else {
-                // Last set for the current exercise: still rest for the SAME exercise
-                // Only after this rest completes will we advance to the next exercise
-                if currentExercise.isTimeBased && currentExercise.restDuration > 0 {
-                    isResting = true
-                    startCurrentPhase()
-                } else {
-                    // No rest for this exercise; advance immediately to next exercise
-                    currentSet = 1
-                    currentExerciseIndex += 1
-                    if currentExerciseIndex >= exercises.count {
-                        isCompleted = true
-                        timeRemaining = 0
-#if canImport(WatchConnectivity)
-                        sendStateToWatch()
-#endif
-                        captureRecap(completedNaturally: true)
-                        showRecap = true
-                        return
-                    }
-                    // Start next exercise phase (exercise or rep-based)
-                    if exercises[currentExerciseIndex].isTimeBased {
-                        isResting = false
-                        startCurrentPhase()
-                    } else {
-                        isResting = false
-                        timeRemaining = 0
-#if canImport(WatchConnectivity)
-                        sendStateToWatch()
-#endif
-                    }
-                }
-            }
+            advancePastCompletedSet()
         }
     }
-    
-    func advanceWorkout() {
-        cancelPhaseEndNotification()
-        // If the current exercise is rep-based, tapping "Reps Complete" should start that exercise's rest
-        if !currentExercise.isTimeBased {
-            if currentSet < currentExercise.sets {
-                // More sets remain for this rep-based exercise: start its rest (same exercise)
-                isResting = true
-                startCurrentPhase()
-            } else {
-                // Finished last set of this rep-based exercise
-                if currentExercise.restDuration > 0 {
-                    // Do this exercise's rest first, then timerExpired() will advance to next exercise
-                    isResting = true
-                    startCurrentPhase()
-                } else {
-                    // No rest for this exercise; advance immediately
-                    currentSet = 1
-                    currentExerciseIndex += 1
-                    if currentExerciseIndex >= exercises.count {
-                        isCompleted = true
-                        timeRemaining = 0
-#if canImport(WatchConnectivity)
-                        sendStateToWatch()
-#endif
-                        captureRecap(completedNaturally: true)
-                        showRecap = true
-                        return
-                    }
-                    if exercises[currentExerciseIndex].isTimeBased {
-                        isResting = false
-                        startCurrentPhase()
-                    } else {
-                        isResting = false
-                        timeRemaining = 0
-                    }
-                }
-            }
+
+    /// Called when the current exercise's work phase finishes (a timer expiring, or a "Reps Complete" tap).
+    /// Superset partners run back-to-back with no rest between them; rest only happens after the
+    /// last exercise in the group finishes each round.
+    private func advancePastCompletedSet() {
+        let groupRange = currentGroupRange
+        if currentExerciseIndex < groupRange.upperBound {
+            // More linked exercises remain this round — move on immediately, no rest.
+            currentExerciseIndex += 1
+            isResting = false
+            startCurrentPhase()
             return
         }
 
-        // Time-based current exercise shouldn't reach here via the button normally,
-        // but keep prior behavior as fallback: rest belongs to the SAME exercise
-        if currentSet < currentExercise.sets {
+        // Finished the last exercise in the group for this round.
+        if currentExercise.restDuration > 0 {
             isResting = true
             startCurrentPhase()
         } else {
-            if currentExercise.restDuration > 0 {
-                isResting = true
-                startCurrentPhase()
-            } else {
-                currentSet = 1
-                currentExerciseIndex += 1
-                if currentExerciseIndex >= exercises.count {
-                    isCompleted = true
-                    timeRemaining = 0
+            advancePastRest(groupRange: groupRange)
+        }
+    }
+
+    /// Called once a between-round (or between-group) rest finishes, or immediately if there was none.
+    /// Loops back to the first exercise in the group for another round, or advances past the group entirely.
+    private func advancePastRest(groupRange: ClosedRange<Int>) {
+        let roundCount = exercises.roundCount(for: groupRange)
+        if currentSet < roundCount {
+            // Another round remains — loop back to the first exercise in the group.
+            currentSet += 1
+            currentExerciseIndex = groupRange.lowerBound
+        } else {
+            // Finished all rounds for this group — advance past it entirely.
+            currentSet = 1
+            currentExerciseIndex = groupRange.upperBound + 1
+            if currentExerciseIndex >= exercises.count {
+                isCompleted = true
+                timeRemaining = 0
 #if canImport(WatchConnectivity)
-                    sendStateToWatch()
+                sendStateToWatch()
 #endif
-                    captureRecap(completedNaturally: true)
-                    showRecap = true
-                    return
-                }
-                if exercises[currentExerciseIndex].isTimeBased {
-                    isResting = false
-                    startCurrentPhase()
-                } else {
-                    isResting = false
-                    timeRemaining = 0
-                }
+                captureRecap(completedNaturally: true)
+                showRecap = true
+                return
             }
         }
+        isResting = false
+        startCurrentPhase()
+    }
+
+    func advanceWorkout() {
+        cancelPhaseEndNotification()
+        advancePastCompletedSet()
     }
     
     func repsCompleteTapped() {
@@ -2139,35 +2244,68 @@ struct WorkoutView: View {
 struct RoutineManagerSheet: View {
     @Binding var savedRoutines: [Routine]
     let currentExercises: [Exercise]
-    let onLoad: (Routine) -> Void
+    let onLoad: ([Exercise]) -> Void
     let onSaved: ([Routine]) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
+    private var pplRoutines: [PreloadedRoutine] {
+        PreloadedRoutines.all.filter { $0.seriesName == "Perfect PPL Split" }
+    }
+    private var standaloneRoutines: [PreloadedRoutine] {
+        PreloadedRoutines.all.filter { $0.seriesName == nil }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                if savedRoutines.isEmpty {
-                    Text("No saved routines yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(savedRoutines) { routine in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(routine.name)
-                                    .font(.headline)
-                                Text("\(routine.exercises.count) exercise\(routine.exercises.count == 1 ? "" : "s")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Load") { onLoad(routine) }
-                                .buttonStyle(.bordered)
+                Section {
+                    ForEach(pplRoutines) { routine in
+                        NavigationLink {
+                            PreloadedRoutineDetailView(routine: routine, onLoad: onLoad)
+                        } label: {
+                            PreloadedRoutineRow(routine: routine)
                         }
                     }
-                    .onDelete { indexSet in
-                        savedRoutines.remove(atOffsets: indexSet)
-                        onSaved(savedRoutines)
+                } header: {
+                    Text("Perfect PPL Split — Athlean-X")
+                }
+
+                if !standaloneRoutines.isEmpty {
+                    Section("Other Routines") {
+                        ForEach(standaloneRoutines) { routine in
+                            NavigationLink {
+                                PreloadedRoutineDetailView(routine: routine, onLoad: onLoad)
+                            } label: {
+                                PreloadedRoutineRow(routine: routine)
+                            }
+                        }
+                    }
+                }
+
+                Section("My Routines") {
+                    if savedRoutines.isEmpty {
+                        Text("No saved routines yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(savedRoutines) { routine in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(routine.name)
+                                        .font(.headline)
+                                    Text("\(routine.exercises.count) exercise\(routine.exercises.count == 1 ? "" : "s")")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Load") { onLoad(routine.exercises) }
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                        .onDelete { indexSet in
+                            savedRoutines.remove(atOffsets: indexSet)
+                            onSaved(savedRoutines)
+                        }
                     }
                 }
             }
@@ -2190,6 +2328,167 @@ struct RoutineManagerSheet: View {
             }
 #endif
         }
+    }
+}
+
+private struct PreloadedRoutineRow: View {
+    let routine: PreloadedRoutine
+
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(routine.accentColor)
+                .frame(width: 44, height: 44)
+                .overlay {
+                    Image(systemName: routine.systemImage)
+                        .foregroundStyle(.white)
+                        .font(.title3)
+                }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(routine.name)
+                    .font(.body)
+                    .fontWeight(.medium)
+                HStack(spacing: 6) {
+                    Text(routine.source)
+                    Text("·")
+                    Text(routine.summaryLine)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct PreloadedRoutineDetailView: View {
+    let routine: PreloadedRoutine
+    let onLoad: ([Exercise]) -> Void
+
+    private var isVideoSource: Bool {
+        routine.sourceURL.contains("youtu")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(routine.source)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Text(routine.name)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    if !routine.routineDescription.isEmpty {
+                        Text(routine.routineDescription)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !routine.sourceURL.isEmpty, let url = URL(string: routine.sourceURL) {
+                        Link(destination: url) {
+                            Label(routine.sourceLinkLabel, systemImage: isVideoSource ? "play.rectangle.fill" : "doc.text.fill")
+                                .font(.caption)
+                                .foregroundStyle(routine.accentColor)
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+                .padding()
+                .background(.gray.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Exercises")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+
+                    ForEach(Array(routine.exercises.enumerated()), id: \.offset) { index, exercise in
+                        let displaySets = routine.exercises.roundCount(for: routine.exercises.supersetGroupRange(containing: index))
+                        PreloadedExerciseRow(index: index, exercise: exercise, displaySets: displaySets, accentColor: routine.accentColor)
+                    }
+                }
+
+                Button {
+                    onLoad(routine.exercises)
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.down.circle.fill")
+                        Text("Load Routine")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(routine.accentColor)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding()
+        }
+        .navigationTitle(routine.name)
+#if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+#endif
+    }
+}
+
+private struct PreloadedExerciseRow: View {
+    let index: Int
+    let exercise: Exercise
+    /// Sets to display: a lone exercise's own `sets`, or its superset chain's round count.
+    let displaySets: Int
+    let accentColor: Color
+
+    private var repsLabel: String {
+        guard !exercise.isTimeBased else {
+            return "\(Int(exercise.exerciseDuration))s"
+        }
+        guard let reps = exercise.targetReps else { return "failure" }
+        if let repsMax = exercise.targetRepsMax, repsMax != reps {
+            return "\(reps)–\(repsMax)"
+        }
+        return "\(reps)"
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            if exercise.isSupersetContinuation {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, alignment: .trailing)
+            } else {
+                Text("\(index + 1)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, alignment: .trailing)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(exercise.name)
+                    .font(.subheadline)
+                    .fontWeight(exercise.isSupersetContinuation ? .regular : .medium)
+                if let notes = exercise.notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Text("\(displaySets) × \(repsLabel)")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(accentColor)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(exercise.isSupersetContinuation ? accentColor.opacity(0.08) : Color.gray.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.leading, exercise.isSupersetContinuation ? 16 : 0)
     }
 }
 

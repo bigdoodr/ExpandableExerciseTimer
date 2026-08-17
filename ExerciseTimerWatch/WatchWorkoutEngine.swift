@@ -92,44 +92,47 @@ final class WatchWorkoutEngine: ObservableObject {
     
     var upNextText: String {
         guard !isCompleted, let exercise = currentExercise else { return "" }
-        
+        let safeIndex = min(max(0, currentExerciseIndex), exercises.count - 1)
+        let groupRange = exercises.supersetGroupRange(containing: safeIndex)
+        let roundCount = exercises.roundCount(for: groupRange)
+
+        func nextExerciseAfterGroupText() -> String {
+            let nextIndex = groupRange.upperBound + 1
+            if nextIndex >= exercises.count {
+                return "Up Next: Workout Complete"
+            }
+            return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
+        }
+
         if isResting {
+            // Rest only ever happens after the last exercise in a group finishes a round.
             let nextSet = currentSet + 1
-            if nextSet <= exercise.sets {
-                let name = exercise.name.isEmpty ? "Exercise \(displayExerciseNumber)" : exercise.name
-                if exercise.isTimeBased {
-                    return "Up Next: \(name) – Set \(nextSet)"
+            if nextSet <= roundCount {
+                let first = exercises[groupRange.lowerBound]
+                let name = first.name.isEmpty ? "Exercise \(groupRange.lowerBound + 1)" : first.name
+                if first.isTimeBased {
+                    return "Up Next: \(name) – Round \(nextSet)"
                 } else {
-                    return "Up Next: \(name) – Set \(nextSet) (Reps)"
+                    return "Up Next: \(name) – Round \(nextSet) (Reps)"
                 }
             } else {
-                let nextIndex = currentExerciseIndex + 1
-                if nextIndex >= exercises.count {
-                    return "Up Next: Workout Complete"
-                } else {
-                    let next = exercises[nextIndex]
-                    return "Up Next: \(nextExerciseLabel(next, index: nextIndex))"
-                }
+                return nextExerciseAfterGroupText()
+            }
+        } else if currentExerciseIndex < groupRange.upperBound {
+            // More linked exercises remain this round — no rest before them.
+            let nextIndex = currentExerciseIndex + 1
+            return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
+        } else if currentSet < roundCount {
+            if exercise.restDuration > 0 {
+                return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
+            } else {
+                return "Up Next: Round \(currentSet + 1)"
             }
         } else {
-            if currentSet < exercise.sets {
-                if exercise.restDuration > 0 {
-                    return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-                } else {
-                    return "Up Next: Set \(currentSet + 1)"
-                }
+            if exercise.restDuration > 0 {
+                return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
             } else {
-                if exercise.restDuration > 0 {
-                    return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-                } else {
-                    let nextIndex = currentExerciseIndex + 1
-                    if nextIndex >= exercises.count {
-                        return "Up Next: Workout Complete"
-                    } else {
-                        let next = exercises[nextIndex]
-                        return "Up Next: \(nextExerciseLabel(next, index: nextIndex))"
-                    }
-                }
+                return nextExerciseAfterGroupText()
             }
         }
     }

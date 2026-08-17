@@ -138,7 +138,7 @@ struct WatchWorkoutView: View {
                     .font(.headline)
                     .lineLimit(2)
                 
-                Text("Set \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
+                Text(isCurrentGroupSuperset ? "Round \(engine.currentSet) of \(currentGroupRoundCount)" : "Set \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
@@ -497,7 +497,21 @@ struct WatchWorkoutView: View {
         guard let exercise = engine.currentExercise else { return "Exercise" }
         return exercise.name.isEmpty ? "Exercise \(engine.displayExerciseNumber)" : exercise.name
     }
-    
+
+    private var currentGroupRange: ClosedRange<Int> {
+        guard !engine.exercises.isEmpty else { return 0...0 }
+        let safeIndex = min(max(0, engine.currentExerciseIndex), engine.exercises.count - 1)
+        return engine.exercises.supersetGroupRange(containing: safeIndex)
+    }
+
+    private var isCurrentGroupSuperset: Bool {
+        currentGroupRange.count > 1
+    }
+
+    private var currentGroupRoundCount: Int {
+        engine.exercises.roundCount(for: currentGroupRange)
+    }
+
     private func hrZoneColor(_ zone: Int) -> Color {
         switch zone {
         case 1: return .blue
