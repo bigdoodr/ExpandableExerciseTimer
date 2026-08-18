@@ -1869,14 +1869,24 @@ struct WorkoutView: View {
         let hours = Int(time) / 3600
         let minutes = (Int(time) % 3600) / 60
         let seconds = Int(time) % 60
-        
+
         if hours > 0 {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         } else {
             return String(format: "%d:%02d", minutes, seconds)
         }
     }
-    
+
+    private func hrZoneColor(_ zone: Int) -> Color {
+        switch zone {
+        case 1: return .blue
+        case 2: return .teal
+        case 3: return .green
+        case 4: return .orange
+        default: return .red
+        }
+    }
+
 #if canImport(UIKit)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -1952,16 +1962,6 @@ struct WorkoutView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func hrZoneColor(_ zone: Int) -> Color {
-        switch zone {
-        case 1: return .blue
-        case 2: return .teal
-        case 3: return .green
-        case 4: return .orange
-        default: return .red
-        }
-    }
-    
     private var caloriesMetric: some View {
         VStack(spacing: 8) {
             HStack(spacing: 4) {
