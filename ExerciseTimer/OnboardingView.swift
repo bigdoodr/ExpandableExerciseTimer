@@ -63,7 +63,7 @@ struct OnboardingView: View {
                 symbol: "repeat",
                 color: .cyan,
                 title: "Repeat a Chain",
-                description: "Linked exercises share one round counter instead of separate sets. The first exercise in a chain shows a \"Repeat Chain\" stepper — set how many rounds the whole group performs. Each exercise runs once per round, then everyone rests together using the last exercise's Rest Duration."
+                description: "Linked exercises share one round counter instead of separate sets. The first exercise in a chain shows a \"Repeat Chain\" stepper — set how many rounds the whole group performs. Each exercise runs once per round before the last exercise's Rest Duration activates."
             ),
             OnboardingStep(
                 symbol: "dumbbell.fill",
@@ -75,7 +75,7 @@ struct OnboardingView: View {
                 symbol: "folder.fill",
                 color: .teal,
                 title: "Save & Load Routines",
-                description: "Tap \"Save as Routine…\" to save your current exercise list under a custom name. Open the folder icon in the toolbar anytime to load a saved routine or browse built-in routines like Athlean-X's Perfect PPL Split."
+                description: "Browse built-in routines like Athlean-X's Perfect PPL Split anytime from the folder icon in the toolbar. Ready to build your own? Tap \"Save as Routine…\" to save your current exercise list under a custom name and load it again later."
             ),
             OnboardingStep(
                 symbol: "square.and.arrow.up.fill",

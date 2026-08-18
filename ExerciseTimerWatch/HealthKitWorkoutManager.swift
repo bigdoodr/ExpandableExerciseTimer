@@ -380,6 +380,27 @@ extension HealthKitWorkoutManager: HKLiveWorkoutBuilderDelegate {
 }
 
 extension HealthKitWorkoutManager {
+    /// Builds the finished workout's time-in-zone breakdown as plain values, so it can be forwarded
+    /// to the iPhone over WatchConnectivity (the iPhone can't read `HKWorkout.zoneGroupsByType`
+    /// itself when the watch — not the iPhone — owns the HealthKit session).
+    func zoneRecapEntries() -> [HRZoneRecapEntry] {
+        if #available(watchOS 27.0, *),
+           let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+           let zoneGroups = finishedWorkout?.zoneGroupsByType,
+           let zoneGroup = zoneGroups[hrType] {
+            let bpm = HKUnit.count().unitDivided(by: .minute())
+            return zoneGroup.zoneDurations.enumerated().map { index, zoneDuration in
+                HRZoneRecapEntry(
+                    zoneIndex: index,
+                    duration: zoneDuration.duration,
+                    minBPM: zoneDuration.zone.minimum?.doubleValue(for: bpm),
+                    maxBPM: zoneDuration.zone.maximum?.doubleValue(for: bpm)
+                )
+            }
+        }
+        return []
+    }
+
     /// Forwards current health data to iPhone via WatchConnectivity, throttled to every 2 seconds.
     func forwardHealthDataIfNeeded() {
         guard isWorkoutActive else { return }

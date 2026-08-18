@@ -51,8 +51,8 @@ struct WatchWorkoutView: View {
         }
         // Handlers live on the outer Group so commands are processed no matter
         // which screen (waiting / active / recap) is currently showing.
-        .onChange(of: connectivity.receivedCommand) { _, command in
-            handleCommand(command)
+        .onChange(of: connectivity.commandSequence) { _, _ in
+            handleCommand(connectivity.receivedCommand)
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
@@ -578,12 +578,18 @@ struct WatchWorkoutView: View {
         
         engine.stopWorkout()
         connectivity.sendWorkoutCommand(.stop)
-        Task { await healthKit.endWorkout() }
+        Task {
+            await healthKit.endWorkout()
+            let zones = healthKit.zoneRecapEntries()
+            if !zones.isEmpty {
+                connectivity.sendWorkoutCommand(.zoneSummary(zones: zones))
+            }
+        }
 
         recapCreatedAt = Date()
         showRecap = true
     }
-    
+
     private func dismissRecap() {
         showRecap = false
         recapData = nil
@@ -639,6 +645,10 @@ struct WatchWorkoutView: View {
             if completed {
                 Task {
                     await healthKit.endWorkout()
+                    let zones = healthKit.zoneRecapEntries()
+                    if !zones.isEmpty {
+                        connectivity.sendWorkoutCommand(.zoneSummary(zones: zones))
+                    }
                     let duration = Date().timeIntervalSince(workoutStartDate)
                     let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
                     await MainActor.run {
@@ -682,7 +692,13 @@ struct WatchWorkoutView: View {
                 completedNaturally: false
             )
             engine.stopWorkout()
-            Task { await healthKit.endWorkout() }
+            Task {
+                await healthKit.endWorkout()
+                let zones = healthKit.zoneRecapEntries()
+                if !zones.isEmpty {
+                    connectivity.sendWorkoutCommand(.zoneSummary(zones: zones))
+                }
+            }
             recapCreatedAt = Date()
             showRecap = true
 
@@ -692,17 +708,19 @@ struct WatchWorkoutView: View {
                 dismissRecap()
             }
             if connectivity.receivedHealthKitEnabled {
+                // Only prepare the session here so watchOS surfaces the app on wrist raise.
+                // Don't request HealthKit authorization yet — .wake fires before the app is
+                // actually foregrounded, so the system can't present the permission sheet and
+                // silently leaves it unanswered. Authorization is requested in startWorkout()/
+                // .start instead, once the person is actively looking at the watch.
                 let actType = connectivity.receivedActivityType
+                let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
                 Task {
-                    await healthKit.requestAuthorization()
-                    if healthKit.isAuthorized {
-                        let config = HealthKitWorkoutManager.workoutConfiguration(for: actType)
-                        await healthKit.prepareWorkoutSession(with: config)
-                    }
+                    await healthKit.prepareWorkoutSession(with: config)
                 }
             }
 
-        case .healthData, .repsComplete:
+        case .healthData, .repsComplete, .zoneSummary:
             break
         }
     }

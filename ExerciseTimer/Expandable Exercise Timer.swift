@@ -114,8 +114,8 @@ struct ExerciseListView: View {
                 workoutViewForPlatform
             } else {
                 builderView
-                    .onChange(of: connectivity.receivedCommand) { _, command in
-                        handleWatchCommand(command)
+                    .onChange(of: connectivity.commandSequence) { _, _ in
+                        handleWatchCommand(connectivity.receivedCommand)
                     }
             }
 #else
@@ -1042,6 +1042,8 @@ struct WorkoutView: View {
     @State private var recapCompletedNaturally = false
     @State private var heartRateReadings: [Double] = []
     @State private var sessionElapsed: TimeInterval = 0
+    /// HR zone breakdown forwarded from the watch, when the watch (not the iPhone) owns the HealthKit session
+    @State private var recapZoneSummary: [HRZoneRecapEntry] = []
 #if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
     @State private var iPhoneOwnsHKSession = false
 #endif
@@ -1354,8 +1356,8 @@ struct WorkoutView: View {
         }
 #endif
 #if canImport(WatchConnectivity)
-        .onChange(of: connectivity.receivedCommand) { _, command in
-            handleWatchWorkoutCommand(command)
+        .onChange(of: connectivity.commandSequence) { _, _ in
+            handleWatchWorkoutCommand(connectivity.receivedCommand)
         }
 #endif
         .onDisappear {
@@ -1445,25 +1447,20 @@ struct WorkoutView: View {
                             recapRow(icon: "flame.fill", color: .orange,
                                      label: "Calories", value: "\(Int(recapCalories)) CAL")
                         }
-#if os(iOS)
-                        if #available(iOS 27.0, *),
-                           let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
-                           let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
-                           let zoneGroup = zoneGroups[hrType],
-                           !zoneGroup.zoneDurations.isEmpty {
-                            let totalZoneTime = zoneGroup.zoneDurations.reduce(0.0) { $0 + $1.duration }
-                            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+                        let zoneEntries = recapZoneEntries
+                        if !zoneEntries.isEmpty {
+                            let totalZoneTime = zoneEntries.reduce(0.0) { $0 + $1.duration }
                             Divider()
                             Text("Heart Rate Zones")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            ForEach(Array(zoneGroup.zoneDurations.enumerated()), id: \.offset) { index, zd in
-                                if index > 0 { Divider() }
-                                let zoneNum = index + 1
+                            ForEach(zoneEntries, id: \.zoneIndex) { entry in
+                                if entry.zoneIndex > 0 { Divider() }
+                                let zoneNum = entry.zoneIndex + 1
                                 let color = hrZoneColor(zoneNum)
-                                let minBPM = zd.zone.minimum.map { Int($0.doubleValue(for: bpmUnit)) }
-                                let maxBPM = zd.zone.maximum.map { Int($0.doubleValue(for: bpmUnit)) }
+                                let minBPM = entry.minBPM.map { Int($0) }
+                                let maxBPM = entry.maxBPM.map { Int($0) }
                                 let bpmLabel: String = {
                                     switch (minBPM, maxBPM) {
                                     case (nil, let hi?): return "<\(hi) bpm"
@@ -1487,10 +1484,10 @@ struct WorkoutView: View {
                                             }
                                         }
                                         Spacer()
-                                        Text(formatTime(zd.duration))
+                                        Text(formatTime(entry.duration))
                                             .font(.subheadline)
                                             .bold()
-                                            .foregroundStyle(zd.duration > 0 ? .primary : .secondary)
+                                            .foregroundStyle(entry.duration > 0 ? .primary : .secondary)
                                             .monospacedDigit()
                                     }
                                     GeometryReader { geo in
@@ -1498,10 +1495,10 @@ struct WorkoutView: View {
                                             RoundedRectangle(cornerRadius: 3)
                                                 .fill(Color.secondary.opacity(0.2))
                                                 .frame(height: 6)
-                                            if totalZoneTime > 0 && zd.duration > 0 {
+                                            if totalZoneTime > 0 && entry.duration > 0 {
                                                 RoundedRectangle(cornerRadius: 3)
                                                     .fill(color)
-                                                    .frame(width: geo.size.width * CGFloat(zd.duration / totalZoneTime), height: 6)
+                                                    .frame(width: geo.size.width * CGFloat(entry.duration / totalZoneTime), height: 6)
                                             }
                                         }
                                     }
@@ -1509,7 +1506,6 @@ struct WorkoutView: View {
                                 }
                             }
                         }
-#endif
 #endif
                     }
                     .padding()
@@ -1563,6 +1559,30 @@ struct WorkoutView: View {
     /// Effective "sets" for recap purposes: a lone exercise's own `sets`, or a chain member's round count.
     private func effectiveSets(at index: Int) -> Int {
         exercises.roundCount(for: exercises.supersetGroupRange(containing: index))
+    }
+
+    /// The HR zone breakdown to show in the recap: data forwarded from the watch (which owns the
+    /// HealthKit session whenever a watch is involved), falling back to reading the iPhone's own
+    /// finished workout when the iPhone recorded the session directly (no watch).
+    private var recapZoneEntries: [HRZoneRecapEntry] {
+        if !recapZoneSummary.isEmpty { return recapZoneSummary }
+#if canImport(HealthKit) && os(iOS)
+        if #available(iOS 27.0, *),
+           let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+           let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
+           let zoneGroup = zoneGroups[hrType] {
+            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+            return zoneGroup.zoneDurations.enumerated().map { index, zoneDuration in
+                HRZoneRecapEntry(
+                    zoneIndex: index,
+                    duration: zoneDuration.duration,
+                    minBPM: zoneDuration.zone.minimum?.doubleValue(for: bpmUnit),
+                    maxBPM: zoneDuration.zone.maximum?.doubleValue(for: bpmUnit)
+                )
+            }
+        }
+#endif
+        return []
     }
 
     private func captureRecap(completedNaturally: Bool) {
@@ -1674,6 +1694,10 @@ struct WorkoutView: View {
             if !healthKitManager.isWorkoutActive {
                 healthKitManager.isWorkoutActive = true
             }
+
+        case .zoneSummary(let zones):
+            // Forwarded from the watch once it ends the HealthKit session it owns.
+            recapZoneSummary = zones
 
         case .wake:
             break
@@ -2591,8 +2615,8 @@ struct WatchSearchView: View {
         .onChange(of: connectivity.isWatchReachable) { _, reachable in
             if reachable { watchFound = true }
         }
-        .onChange(of: connectivity.receivedCommand) { _, command in
-            if case .start(_, _, _) = command {
+        .onChange(of: connectivity.commandSequence) { _, _ in
+            if case .start(_, _, _) = connectivity.receivedCommand {
                 isPresented = false
                 isWorkoutActive = true
             }

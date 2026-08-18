@@ -14,6 +14,19 @@ enum WorkoutCommand: Codable, Equatable {
     case repsComplete
     /// Sent from iPhone to watch to wake the watch app; watch calls session.prepare() so it surfaces on wrist raise
     case wake
+    /// Sent from whichever device recorded the HealthKit workout session to the other device once the
+    /// workout ends, so both recaps can show the same time-in-zone breakdown. Only the device that owns
+    /// the session can read `HKWorkout.zoneGroupsByType`, so the data has to be forwarded as plain values.
+    case zoneSummary(zones: [HRZoneRecapEntry])
+}
+
+/// A single HR zone's time-in-zone, computed by the device that owns the HealthKit workout session and
+/// forwarded to the other device for recap display.
+struct HRZoneRecapEntry: Codable, Equatable {
+    let zoneIndex: Int
+    let duration: TimeInterval
+    let minBPM: Double?
+    let maxBPM: Double?
 }
 
 /// Keys for WatchConnectivity message/context dictionaries

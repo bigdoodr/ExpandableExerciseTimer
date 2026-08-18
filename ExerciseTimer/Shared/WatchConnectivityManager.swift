@@ -14,6 +14,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     
     @Published var receivedExercises: [Exercise] = []
     @Published var receivedCommand: WorkoutCommand?
+    /// Increments on every received command, even ones identical to the last (e.g. repeated
+    /// `.repsComplete` taps for consecutive sets). Views observe this instead of `receivedCommand`
+    /// directly, since two back-to-back assignments of an *equal* enum value in the same run-loop
+    /// tick get coalesced by SwiftUI's onChange and never fire.
+    @Published var commandSequence = 0
     @Published var isWatchReachable = false
     @Published var receivedHealthKitEnabled = false
     @Published var receivedActivityType: String?
@@ -41,7 +46,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 // Only queue commands that are safe to deliver out-of-order later.
                 // Never queue time-sensitive or idempotent-breaking commands.
                 switch command {
-                case .healthData, .stop, .pause, .resume, .repsComplete, .wake: return
+                case .healthData, .stop, .pause, .resume, .repsComplete, .wake, .zoneSummary: return
                 default: break
                 }
                 session.transferUserInfo(message)
@@ -95,9 +100,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         if let commandData = message[WCContextKey.workoutCommand] as? Data,
            let command = try? JSONDecoder().decode(WorkoutCommand.self, from: commandData) {
             Task { @MainActor in
-                // Reset first so onChange always fires, even for duplicate commands
-                self.receivedCommand = nil
                 self.receivedCommand = command
+                self.commandSequence += 1
                 // Also extract exercises from start command
                 if case .start(let exercises, _, _) = command {
                     self.receivedExercises = exercises
