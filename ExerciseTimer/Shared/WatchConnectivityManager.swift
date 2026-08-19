@@ -22,6 +22,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var isWatchReachable = false
     @Published var receivedHealthKitEnabled = false
     @Published var receivedActivityType: String?
+    /// Time-in-zone forwarded from the watch once it ends the HealthKit session it owns.
+    /// Lives here rather than in a view's `@State` because it arrives *after* the recap has
+    /// replaced the workout view — any `onChange` attached to that view is torn down by then.
+    @Published var completedZoneSummary: [HRZoneRecapEntry] = []
     
     private var session: WCSession?
     
@@ -36,17 +40,28 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     
     /// Send a workout command to the counterpart
     func sendWorkoutCommand(_ command: WorkoutCommand) {
+        // A new workout invalidates the previous workout's zone breakdown.
+        if case .start = command { completedZoneSummary = [] }
         guard let session, session.activationState == .activated else { return }
         guard let data = try? JSONEncoder().encode(command) else { return }
         let message: [String: Any] = [WCContextKey.workoutCommand: data]
-        
+
+        // Zone summaries are computed only once the HealthKit session has finished, which
+        // routinely lands while the counterpart is backgrounded or mid-transition.
+        // transferUserInfo queues reliably and delivers regardless of reachability;
+        // sendMessage would silently drop it.
+        if case .zoneSummary = command {
+            session.transferUserInfo(message)
+            return
+        }
+
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
                 print("WC sendMessage failed: \(error.localizedDescription)")
                 // Only queue commands that are safe to deliver out-of-order later.
                 // Never queue time-sensitive or idempotent-breaking commands.
                 switch command {
-                case .healthData, .stop, .pause, .resume, .repsComplete, .wake, .zoneSummary: return
+                case .healthData, .stop, .pause, .resume, .repsComplete, .wake: return
                 default: break
                 }
                 session.transferUserInfo(message)
@@ -105,6 +120,13 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 // Also extract exercises from start command
                 if case .start(let exercises, _, _) = command {
                     self.receivedExercises = exercises
+                    // A new workout invalidates the previous workout's zone breakdown.
+                    self.completedZoneSummary = []
+                }
+                // Stored on the manager rather than in a view's @State: this arrives after the
+                // recap has replaced the workout view, so an onChange on that view is already gone.
+                if case .zoneSummary(let zones) = command {
+                    self.completedZoneSummary = zones
                 }
             }
         }

@@ -1565,6 +1565,13 @@ struct WorkoutView: View {
     /// HealthKit session whenever a watch is involved), falling back to reading the iPhone's own
     /// finished workout when the iPhone recorded the session directly (no watch).
     private var recapZoneEntries: [HRZoneRecapEntry] {
+#if canImport(WatchConnectivity)
+        // Read from the connectivity manager — a @StateObject that outlives the recap branch —
+        // rather than from view @State. The watch only sends .zoneSummary once its HealthKit
+        // session has finished, which lands after showRecap flips and workoutContent (along
+        // with the onChange that used to catch it) has left the view hierarchy.
+        if !connectivity.completedZoneSummary.isEmpty { return connectivity.completedZoneSummary }
+#endif
         if !recapZoneSummary.isEmpty { return recapZoneSummary }
 #if canImport(HealthKit) && os(iOS)
         if #available(iOS 27.0, *),

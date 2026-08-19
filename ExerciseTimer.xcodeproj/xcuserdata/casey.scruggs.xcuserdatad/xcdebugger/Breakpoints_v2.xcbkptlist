@@ -16,8 +16,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "1794"
             endingLineNumber = "1794"
-            landmarkName = "heartRateMetric"
-            landmarkType = "24">
+            landmarkName = "advancePastCompletedSet()"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
       <BreakpointProxy
@@ -32,8 +32,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "1793"
             endingLineNumber = "1793"
-            landmarkName = "heartRateMetric"
-            landmarkType = "24">
+            landmarkName = "advancePastCompletedSet()"
+            landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>
    </Breakpoints>

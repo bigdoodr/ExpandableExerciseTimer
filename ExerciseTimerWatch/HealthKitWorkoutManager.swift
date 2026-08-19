@@ -20,6 +20,10 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var currentHRZoneIndex: Int? = nil
     /// The finished HKWorkout after endWorkout() completes; provides zoneGroupsByType for recap.
     @Published var finishedWorkout: HKWorkout? = nil
+    /// Time-in-zone snapshot taken from the live builder immediately before it is torn down.
+    /// `finishWorkout()` is asynchronous and can hand back a workout whose zone groups aren't
+    /// populated yet; the live builder always has the data. Fallback for `zoneRecapEntries()`.
+    private var liveZoneSnapshot: [HRZoneRecapEntry] = []
 
     /// Throttle for forwarding health data to iPhone via WatchConnectivity
     private var lastHealthDataForward: Date = .distantPast
@@ -108,6 +112,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     func startWorkoutSession(with configuration: HKWorkoutConfiguration) async {
         startError = nil
         finishedWorkout = nil
+        liveZoneSnapshot = []
         currentHRZoneIndex = nil
 
         do {
@@ -231,6 +236,15 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     }
 
     func endWorkout() async {
+        // Clear the previous workout's results — but only when this call actually owns a live
+        // builder to produce new ones. endWorkout() runs twice for a single workout on the
+        // watch-initiated stop path (the watch ends locally, then the iPhone echoes .stop back),
+        // and the second call must not wipe what the first one captured.
+        if liveWorkoutBuilder != nil {
+            finishedWorkout = nil
+            liveZoneSnapshot = []
+        }
+
         let session = workoutSession
         workoutSession = nil
         isWorkoutActive = false
@@ -243,6 +257,8 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
 #if os(watchOS)
         if let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder {
             liveWorkoutBuilder = nil
+            // Snapshot time-in-zone off the live builder before endCollection tears it down.
+            liveZoneSnapshot = zoneEntries(fromLiveBuilder: builder)
             do {
                 try await builder.endCollection(at: Date())
                 finishedWorkout = try await builder.finishWorkout()
@@ -389,7 +405,7 @@ extension HealthKitWorkoutManager {
            let zoneGroups = finishedWorkout?.zoneGroupsByType,
            let zoneGroup = zoneGroups[hrType] {
             let bpm = HKUnit.count().unitDivided(by: .minute())
-            return zoneGroup.zoneDurations.enumerated().map { index, zoneDuration in
+            let entries = zoneGroup.zoneDurations.enumerated().map { index, zoneDuration in
                 HRZoneRecapEntry(
                     zoneIndex: index,
                     duration: zoneDuration.duration,
@@ -397,8 +413,28 @@ extension HealthKitWorkoutManager {
                     maxBPM: zoneDuration.zone.maximum?.doubleValue(for: bpm)
                 )
             }
+            if !entries.isEmpty { return entries }
         }
-        return []
+        // Fall back to the snapshot taken from the live builder before it was discarded.
+        return liveZoneSnapshot
+    }
+
+    /// Reads time-in-zone straight off a live builder. Called just before the builder is
+    /// discarded so the recap still has data if `finishWorkout()` hasn't populated
+    /// `zoneGroupsByType` by the time it returns.
+    func zoneEntries(fromLiveBuilder builder: HKLiveWorkoutBuilder) -> [HRZoneRecapEntry] {
+        guard #available(watchOS 27.0, *),
+              let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+              let group = builder.zoneGroup(for: hrType) else { return [] }
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        return group.zoneDurations.enumerated().map { index, zoneDuration in
+            HRZoneRecapEntry(
+                zoneIndex: index,
+                duration: zoneDuration.duration,
+                minBPM: zoneDuration.zone.minimum?.doubleValue(for: bpm),
+                maxBPM: zoneDuration.zone.maximum?.doubleValue(for: bpm)
+            )
+        }
     }
 
     /// Forwards current health data to iPhone via WatchConnectivity, throttled to every 2 seconds.
