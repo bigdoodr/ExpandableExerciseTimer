@@ -3,7 +3,11 @@ import Foundation
 /// Commands sent between iOS and watchOS to control workout state.
 /// iPhone is always the timer authority; watch sends action commands back.
 enum WorkoutCommand: Codable, Equatable {
-    case start(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?)
+    /// `workoutID` identifies this specific workout session. `.zoneSummary` is delivered via
+    /// `transferUserInfo` (queued, best-effort) so it can arrive after a *later* workout has
+    /// already started — the receiver compares this id against the current workout's id and
+    /// discards anything that doesn't match, rather than displaying stale zone data.
+    case start(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?, workoutID: UUID)
     case updatePhase(exerciseIndex: Int, set: Int, isResting: Bool, isPaused: Bool,
                      phaseEndDate: Date?, isCompleted: Bool)
     case pause
@@ -17,7 +21,8 @@ enum WorkoutCommand: Codable, Equatable {
     /// Sent from whichever device recorded the HealthKit workout session to the other device once the
     /// workout ends, so both recaps can show the same time-in-zone breakdown. Only the device that owns
     /// the session can read `HKWorkout.zoneGroupsByType`, so the data has to be forwarded as plain values.
-    case zoneSummary(zones: [HRZoneRecapEntry])
+    /// `workoutID` must match the `.start` that began the session it was computed from.
+    case zoneSummary(zones: [HRZoneRecapEntry], workoutID: UUID)
 }
 
 /// A single HR zone's time-in-zone, computed by the device that owns the HealthKit workout session and

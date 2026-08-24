@@ -25,6 +25,10 @@ struct WatchWorkoutView: View {
     @State private var heartRateReadings: [Double] = []
     /// When the current recap was created — used to auto-dismiss stale recaps
     @State private var recapCreatedAt: Date = .distantPast
+    /// Identifies the workout currently in progress, so a `.zoneSummary` sent once the HealthKit
+    /// session ends can be tagged with the workout it belongs to — the iPhone discards it if a
+    /// newer workout has started by the time it arrives.
+    @State private var currentWorkoutID: UUID = UUID()
 
     /// Recaps older than this are dismissed when the app is (re)opened
     private static let recapStaleInterval: TimeInterval = 5 * 60
@@ -535,8 +539,10 @@ struct WatchWorkoutView: View {
         let exercises = connectivity.receivedExercises
         let hkEnabled = connectivity.receivedHealthKitEnabled
         let actType = connectivity.receivedActivityType
-        
-        connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType))
+        let workoutID = UUID()
+        currentWorkoutID = workoutID
+
+        connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType, workoutID: workoutID))
         engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
         workoutStartDate = Date()
         sessionElapsed = 0
@@ -582,7 +588,7 @@ struct WatchWorkoutView: View {
             await healthKit.endWorkout()
             let zones = healthKit.zoneRecapEntries()
             if !zones.isEmpty {
-                connectivity.sendWorkoutCommand(.zoneSummary(zones: zones))
+                connectivity.sendWorkoutCommand(.zoneSummary(zones: zones, workoutID: currentWorkoutID))
             }
         }
 
@@ -616,11 +622,12 @@ struct WatchWorkoutView: View {
         guard let command else { return }
         
         switch command {
-        case .start(let exerciseList, let hkEnabled, let actType):
+        case .start(let exerciseList, let hkEnabled, let actType, let workoutID):
             // A new workout always dismisses any leftover recap
             showRecap = false
             recapData = nil
             heartRateReadings = []
+            currentWorkoutID = workoutID
             engine.startWorkout(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
             workoutStartDate = Date()
             sessionElapsed = 0
@@ -647,7 +654,7 @@ struct WatchWorkoutView: View {
                     await healthKit.endWorkout()
                     let zones = healthKit.zoneRecapEntries()
                     if !zones.isEmpty {
-                        connectivity.sendWorkoutCommand(.zoneSummary(zones: zones))
+                        connectivity.sendWorkoutCommand(.zoneSummary(zones: zones, workoutID: currentWorkoutID))
                     }
                     let duration = Date().timeIntervalSince(workoutStartDate)
                     let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
@@ -696,7 +703,7 @@ struct WatchWorkoutView: View {
                 await healthKit.endWorkout()
                 let zones = healthKit.zoneRecapEntries()
                 if !zones.isEmpty {
-                    connectivity.sendWorkoutCommand(.zoneSummary(zones: zones))
+                    connectivity.sendWorkoutCommand(.zoneSummary(zones: zones, workoutID: currentWorkoutID))
                 }
             }
             recapCreatedAt = Date()

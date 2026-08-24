@@ -26,7 +26,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     /// Lives here rather than in a view's `@State` because it arrives *after* the recap has
     /// replaced the workout view — any `onChange` attached to that view is torn down by then.
     @Published var completedZoneSummary: [HRZoneRecapEntry] = []
-    
+    /// The workout currently in progress (or most recently started). Used to reject a
+    /// `.zoneSummary` that was computed for a *previous* workout but arrives late — see
+    /// `WorkoutCommand.zoneSummary`.
+    @Published private(set) var currentWorkoutID: UUID?
+
     private var session: WCSession?
     
     override init() {
@@ -41,7 +45,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     /// Send a workout command to the counterpart
     func sendWorkoutCommand(_ command: WorkoutCommand) {
         // A new workout invalidates the previous workout's zone breakdown.
-        if case .start = command { completedZoneSummary = [] }
+        if case .start(_, _, _, let workoutID) = command {
+            currentWorkoutID = workoutID
+            completedZoneSummary = []
+        }
         guard let session, session.activationState == .activated else { return }
         guard let data = try? JSONEncoder().encode(command) else { return }
         let message: [String: Any] = [WCContextKey.workoutCommand: data]
@@ -118,14 +125,18 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 self.receivedCommand = command
                 self.commandSequence += 1
                 // Also extract exercises from start command
-                if case .start(let exercises, _, _) = command {
+                if case .start(let exercises, _, _, let workoutID) = command {
                     self.receivedExercises = exercises
+                    self.currentWorkoutID = workoutID
                     // A new workout invalidates the previous workout's zone breakdown.
                     self.completedZoneSummary = []
                 }
                 // Stored on the manager rather than in a view's @State: this arrives after the
                 // recap has replaced the workout view, so an onChange on that view is already gone.
-                if case .zoneSummary(let zones) = command {
+                // Only accepted if it matches the workout currently in progress — `.zoneSummary` is
+                // sent via `transferUserInfo` (queued, best-effort) and can arrive after a later
+                // workout has already started, in which case it's stale and must be discarded.
+                if case .zoneSummary(let zones, let workoutID) = command, workoutID == self.currentWorkoutID {
                     self.completedZoneSummary = zones
                 }
             }

@@ -21,16 +21,28 @@ struct RoutineEntity: AppEntity {
 @available(iOS 16.0, *)
 struct RoutineEntityQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [RoutineEntity] {
-        loadRoutines()
-            .filter { identifiers.contains($0.id.uuidString) }
-            .map { RoutineEntity(id: $0.id.uuidString, name: $0.name) }
+        allEntities().filter { identifiers.contains($0.id) }
     }
 
     func suggestedEntities() async throws -> [RoutineEntity] {
-        loadRoutines().map { RoutineEntity(id: $0.id.uuidString, name: $0.name) }
+        allEntities()
     }
 
-    private func loadRoutines() -> [Routine] {
+    // Built-in routines are bundled with the app and always available; user-saved
+    // routines come from UserDefaults. Both are surfaced to Siri/Shortcuts, with
+    // "preloaded:"/"saved:" id prefixes so StartRoutineIntent and the main app know
+    // which store to resolve the identifier against.
+    private func allEntities() -> [RoutineEntity] {
+        let preloaded = PreloadedRoutines.all.map {
+            RoutineEntity(id: "preloaded:\($0.id.uuidString)", name: $0.name)
+        }
+        let saved = loadSavedRoutines().map {
+            RoutineEntity(id: "saved:\($0.id.uuidString)", name: $0.name)
+        }
+        return preloaded + saved
+    }
+
+    private func loadSavedRoutines() -> [Routine] {
         guard let data = UserDefaults.standard.data(forKey: "savedRoutines"),
               let routines = try? JSONDecoder().decode([Routine].self, from: data)
         else { return [] }
@@ -59,20 +71,21 @@ struct StartRoutineIntent: AppIntent {
 }
 
 // MARK: - App Shortcuts Provider
-// To enable Siri voice phrases (e.g. "Hey Siri, start my Morning Strength workout"),
-// add the Siri capability in Xcode and uncomment the AppShortcutsProvider below.
-//
-// @available(iOS 16.4, *)
-// struct ExerciseTimerShortcuts: AppShortcutsProvider {
-//     static var appShortcuts: [AppShortcut] {
-//         AppShortcut(
-//             intent: StartRoutineIntent(),
-//             phrases: [
-//                 "Start \(\.$routine) in \(.applicationName)",
-//                 "Start my \(\.$routine) workout in \(.applicationName)"
-//             ],
-//             shortTitle: "Start Routine",
-//             systemImageName: "figure.run"
-//         )
-//     }
-// }
+// Enables Siri voice phrases (e.g. "Hey Siri, start my Morning Strength workout")
+// and surfaces routines in the Shortcuts app. Works on iOS and macOS 13+ since
+// this target builds for both platforms.
+
+@available(iOS 16.4, macOS 13.0, *)
+struct ExerciseTimerShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: StartRoutineIntent(),
+            phrases: [
+                "Start \(\.$routine) in \(.applicationName)",
+                "Start my \(\.$routine) workout in \(.applicationName)"
+            ],
+            shortTitle: "Start Routine",
+            systemImageName: "figure.run"
+        )
+    }
+}

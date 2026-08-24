@@ -53,6 +53,7 @@ enum PreloadedRoutines {
     private static let watchOnYouTube = "Watch on YouTube"
 
     static let pull1 = PreloadedRoutine(
+        id: UUID(uuidString: "58D888B5-11DD-4D8E-8343-FC0A07114744")!,
         name: "Pull 1",
         seriesName: pplSeries,
         routineDescription: "The first pull day of Athlean-X's Perfect PPL Split, built around a heavy deadlift and back-width work.",
@@ -73,6 +74,7 @@ enum PreloadedRoutines {
     )
 
     static let pull2 = PreloadedRoutine(
+        id: UUID(uuidString: "8B5A946C-18B0-4682-890B-996FC4320E84")!,
         name: "Pull 2",
         seriesName: pplSeries,
         routineDescription: "The second pull day of Athlean-X's Perfect PPL Split, emphasizing pullups and grip-intensive rowing.",
@@ -93,6 +95,7 @@ enum PreloadedRoutines {
     )
 
     static let push1 = PreloadedRoutine(
+        id: UUID(uuidString: "BC9F821B-CF49-475B-817F-753E7978CFBE")!,
         name: "Push 1",
         seriesName: pplSeries,
         routineDescription: "The first push day of Athlean-X's Perfect PPL Split, led by a heavy bench press.",
@@ -113,6 +116,7 @@ enum PreloadedRoutines {
     )
 
     static let push2 = PreloadedRoutine(
+        id: UUID(uuidString: "AF8EB7C6-90F1-44E6-A88D-B7FE9EA2ECA9")!,
         name: "Push 2",
         seriesName: pplSeries,
         routineDescription: "The second push day of Athlean-X's Perfect PPL Split, led by a heavy overhead press.",
@@ -133,6 +137,7 @@ enum PreloadedRoutines {
     )
 
     static let legs1 = PreloadedRoutine(
+        id: UUID(uuidString: "CA697F59-630E-4CDD-BED5-CBD5C8F9DF8D")!,
         name: "Legs 1",
         seriesName: pplSeries,
         routineDescription: "The first leg day of Athlean-X's Perfect PPL Split, led by a heavy squat.",
@@ -151,6 +156,7 @@ enum PreloadedRoutines {
     )
 
     static let legs2 = PreloadedRoutine(
+        id: UUID(uuidString: "DB9C223F-8A13-42EF-A1F5-31C8E3126CD0")!,
         name: "Legs 2",
         seriesName: pplSeries,
         routineDescription: "The second leg day of Athlean-X's Perfect PPL Split. Shares its squat, hip thrust, and lunge work with Legs 1.",
@@ -169,6 +175,7 @@ enum PreloadedRoutines {
     )
 
     static let arnoldsCircuit = PreloadedRoutine(
+        id: UUID(uuidString: "3EAF8D94-25A3-4DBD-8DBF-7B92B199865D")!,
         name: "Arnold's New Workout",
         seriesName: nil,
         routineDescription: "All 8 movements are linked as one circuit — complete one round of each, back-to-back, for 3 rounds total, resting 90 seconds after each round. Focus on form and full range of motion, not speed.",

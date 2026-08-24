@@ -47,6 +47,11 @@ struct ExerciseListView: View {
 #if os(iOS)
     @State private var enableHealthKitTracking = false
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
+    /// True once the user has explicitly touched the HealthKit toggle this session — used to
+    /// decide whether to prompt before starting, so a forgotten toggle doesn't silently track
+    /// (or silently skip tracking) a workout. Resets each launch by design.
+    @State private var healthKitToggleTouched = false
+    @State private var showHealthKitStartConfirm = false
 #endif
     @State private var showingResetConfirm = false
     @State private var savedRoutines: [Routine] = []
@@ -58,6 +63,8 @@ struct ExerciseListView: View {
 #endif
     @State private var showOnboarding = false
     @State private var onboardingMode: OnboardingView.Mode = .full
+    @State private var showSettings = false
+    @State private var requestOnboardingFromSettings = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let exercisesDefaultsKey = "savedExercises"
@@ -153,10 +160,6 @@ struct ExerciseListView: View {
         List {
             exerciseListSection
             addExerciseSection
-#if canImport(UIKit)
-            keepAwakeSection
-            backgroundAudioSection
-#endif
 #if os(iOS)
             healthKitSection
 #endif
@@ -183,6 +186,8 @@ struct ExerciseListView: View {
                     .accessibilityLabel("Export")
                 Button(action: { showingResetConfirm = true }) { Image(systemName: "arrow.counterclockwise") }
                     .accessibilityLabel("Reset")
+                Button(action: { showSettings = true }) { Image(systemName: "gearshape") }
+                    .accessibilityLabel("Settings")
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
@@ -211,9 +216,22 @@ struct ExerciseListView: View {
 #if os(iOS)
         .onChange(of: enableHealthKitTracking) { _, _ in
             persistExercises()
+            healthKitToggleTouched = true
         }
         .onChange(of: selectedActivityType) { _, _ in
             persistExercises()
+        }
+        .alert("Track with HealthKit?", isPresented: $showHealthKitStartConfirm) {
+            Button("Skip") {
+                healthKitToggleTouched = true
+                startOrSearchForWatchConfirmed()
+            }
+            Button("Enable") {
+                enableHealthKitTracking = true
+                startOrSearchForWatchConfirmed()
+            }
+        } message: {
+            Text("HealthKit tracking hasn't been set for this workout. Enable it to record this session to Apple Health, or skip it for a quick timer that isn't a workout.")
         }
 #endif
         .onChange(of: scenePhase) { _, phase in
@@ -240,6 +258,25 @@ struct ExerciseListView: View {
                     persistRoutines()
                 }
             )
+        }
+        .sheet(isPresented: $showSettings, onDismiss: {
+            // Settings and the onboarding guide can't be presented at once — this view requested
+            // the guide, dismissed itself, and now that the dismissal has finished, hand off.
+            if requestOnboardingFromSettings {
+                requestOnboardingFromSettings = false
+                onboardingMode = .full
+                showOnboarding = true
+            }
+        }) {
+#if canImport(UIKit)
+            SettingsView(
+                keepScreenAwake: $keepScreenAwake,
+                enableBackgroundAudio: $enableBackgroundAudio,
+                requestOnboarding: $requestOnboardingFromSettings
+            )
+#else
+            SettingsView(requestOnboarding: $requestOnboardingFromSettings)
+#endif
         }
         .alert("Save as Routine", isPresented: $showSaveRoutineAlert) {
             TextField("Routine Name", text: $newRoutineName)
@@ -375,35 +412,7 @@ struct ExerciseListView: View {
             .buttonStyle(.plain)
         }
     }
-    
-#if canImport(UIKit)
-    @ViewBuilder
-    private var keepAwakeSection: some View {
-        Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
-            Toggle(isOn: $keepScreenAwake) {
-                HStack {
-                    Image(systemName: keepScreenAwake ? "moon.zzz.fill" : "moon.zzz")
-                    Text("Keep Screen Awake")
-                }
-            }
-            .toggleStyle(.switch)
-        }
-    }
-    
-    @ViewBuilder
-    private var backgroundAudioSection: some View {
-        Section(footer: Text("Keeps a low-level audio session active so timers and sounds continue while the screen is locked or the app is backgrounded. May increase battery usage.")) {
-            Toggle(isOn: $enableBackgroundAudio) {
-                HStack {
-                    Image(systemName: enableBackgroundAudio ? "speaker.wave.2.fill" : "speaker.slash")
-                    Text("Background Audio")
-                }
-            }
-            .toggleStyle(.switch)
-        }
-    }
-#endif
-    
+
 #if os(iOS)
     @ViewBuilder
     private var healthKitSection: some View {
@@ -449,23 +458,20 @@ struct ExerciseListView: View {
                 .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-
-            Button(action: {
-                onboardingMode = .full
-                showOnboarding = true
-            }) {
-                HStack {
-                    Image(systemName: "questionmark.circle")
-                    Text("View Onboarding Guide")
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
         }
     }
 
     private func startOrSearchForWatch() {
+#if os(iOS)
+        guard healthKitToggleTouched else {
+            showHealthKitStartConfirm = true
+            return
+        }
+#endif
+        startOrSearchForWatchConfirmed()
+    }
+
+    private func startOrSearchForWatchConfirmed() {
 #if canImport(WatchConnectivity)
         if WCSession.isSupported() {
 #if canImport(HealthKit)
@@ -494,7 +500,8 @@ struct ExerciseListView: View {
         let command = WorkoutCommand.start(
             exercises: exercises,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil,
+            workoutID: UUID()
         )
         WatchConnectivityManager.shared.sendWorkoutCommand(command)
 #endif
@@ -575,12 +582,27 @@ struct ExerciseListView: View {
         }
     }
 
+    /// Resolves a "saved:<uuid>" or "preloaded:<uuid>" identifier set by StartRoutineIntent
+    /// (from Siri/Shortcuts) against the matching store. Kept separate from `savedRoutines`
+    /// lookups only, since preloaded routines never persist to UserDefaults.
+    private func pendingRoutineExercises(for idStr: String) -> [Exercise]? {
+        if idStr.hasPrefix("saved:") {
+            let uuidStr = String(idStr.dropFirst("saved:".count))
+            guard let uuid = UUID(uuidString: uuidStr) else { return nil }
+            return savedRoutines.first(where: { $0.id == uuid })?.exercises
+        } else if idStr.hasPrefix("preloaded:") {
+            let uuidStr = String(idStr.dropFirst("preloaded:".count))
+            guard let uuid = UUID(uuidString: uuidStr) else { return nil }
+            return PreloadedRoutines.all.first(where: { $0.id == uuid })?.exercises
+        }
+        return nil
+    }
+
     private func checkPendingRoutine() {
         guard let idStr = UserDefaults.standard.string(forKey: pendingRoutineKey),
-              let uuid = UUID(uuidString: idStr),
-              let routine = savedRoutines.first(where: { $0.id == uuid }) else { return }
+              let matchedExercises = pendingRoutineExercises(for: idStr) else { return }
         UserDefaults.standard.removeObject(forKey: pendingRoutineKey)
-        exercises = routine.exercises
+        exercises = matchedExercises
         normalizeSupersets()
 #if canImport(WatchConnectivity)
         isSearchingForWatch = true
@@ -595,7 +617,7 @@ struct ExerciseListView: View {
         guard let command else { return }
 
         switch command {
-        case .start(let exerciseList, _, _):
+        case .start(let exerciseList, _, _, _):
             // Watch is starting a workout — iPhone drives timers
             exercises = exerciseList
             normalizeSupersets()
@@ -1270,6 +1292,7 @@ struct WorkoutView: View {
                         VStack(spacing: 12) {
                             HStack(spacing: 16) {
                                 pauseResumeButton
+                                skipButton
                                 cancelButton
                             }
                             HStack(spacing: 16) {
@@ -1280,6 +1303,7 @@ struct WorkoutView: View {
                     } else {
                         HStack(spacing: 16) {
                             pauseResumeButton
+                            skipButton
                             cancelButton
                             awakeButton
                             backgroundAudioButton
@@ -1290,6 +1314,7 @@ struct WorkoutView: View {
 #else
                 HStack(spacing: 16) {
                     pauseResumeButton
+                    skipButton
                     cancelButton
                 }
                 .padding(.horizontal)
@@ -1505,6 +1530,22 @@ struct WorkoutView: View {
                                     .frame(height: 6)
                                 }
                             }
+                        } else if recapHeartRate > 0 {
+#if os(iOS)
+                            // Zone data lands after HealthKit finishes processing the workout —
+                            // a few seconds on-device, longer if a watch session has to sync it
+                            // over first. Let the user know it's still coming rather than looking
+                            // like the feature silently failed.
+                            Divider()
+                            Text("Heart Rate Zones")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Calculating your zone breakdown — this can take a few seconds to appear.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+#endif
                         }
 #endif
                     }
@@ -1702,8 +1743,11 @@ struct WorkoutView: View {
                 healthKitManager.isWorkoutActive = true
             }
 
-        case .zoneSummary(let zones):
-            // Forwarded from the watch once it ends the HealthKit session it owns.
+        case .zoneSummary(let zones, let workoutID):
+            // Forwarded from the watch once it ends the HealthKit session it owns. Only accept
+            // it if it belongs to the workout currently running — see WatchConnectivityManager's
+            // matching guard on `completedZoneSummary` for why a stale one can arrive here at all.
+            guard workoutID == connectivity.currentWorkoutID else { return }
             recapZoneSummary = zones
 
         case .wake:
@@ -1776,6 +1820,16 @@ struct WorkoutView: View {
         } else {
             advancePastCompletedSet()
         }
+    }
+
+    /// Manually skip the current phase — an exercise's active timer/set, or a rest period —
+    /// and advance immediately. Reuses `timerExpired()` so behavior (including its guards
+    /// against skipping while exiting or already completed) matches a phase finishing naturally.
+    func skipPhaseTapped() {
+        timerExpired()
+#if canImport(WatchConnectivity)
+        sendStateToWatch()
+#endif
     }
 
     /// Called when the current exercise's work phase finishes (a timer expiring, or a "Reps Complete" tap).
@@ -2076,6 +2130,23 @@ struct WorkoutView: View {
             .cornerRadius(12)
         }
     }
+
+    /// Skips the rest of the current exercise timer/set, or the current rest period, and
+    /// advances immediately — same effect a natural completion would have.
+    private var skipButton: some View {
+        Button(action: skipPhaseTapped) {
+            HStack {
+                Image(systemName: "forward.end.fill")
+                Text(isResting ? "Skip Rest" : "Skip")
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(Color.orange)
+            .cornerRadius(12)
+        }
+    }
     
 #if canImport(UIKit)
     private func configureAudioSession() {
@@ -2357,6 +2428,10 @@ struct RoutineManagerSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            // Without an explicit size, NavigationStack+List inside a macOS .sheet()
+            // can fail to report a usable intrinsic size and the sheet collapses to
+            // just its title bar (no visible rows). Force a reasonable window size.
+            .frame(minWidth: 420, idealWidth: 480, minHeight: 480, idealHeight: 560)
 #endif
         }
     }
@@ -2623,7 +2698,7 @@ struct WatchSearchView: View {
             if reachable { watchFound = true }
         }
         .onChange(of: connectivity.commandSequence) { _, _ in
-            if case .start(_, _, _) = connectivity.receivedCommand {
+            if case .start(_, _, _, _) = connectivity.receivedCommand {
                 isPresented = false
                 isWorkoutActive = true
             }
@@ -2640,7 +2715,7 @@ struct WatchSearchView: View {
     private func continueOnIPhone() {
 #if canImport(HealthKit)
         WatchConnectivityManager.shared.sendWorkoutCommand(
-            .start(exercises: exercises, healthKitEnabled: healthKitEnabled, activityType: activityType)
+            .start(exercises: exercises, healthKitEnabled: healthKitEnabled, activityType: activityType, workoutID: UUID())
         )
 #endif
         isPresented = false

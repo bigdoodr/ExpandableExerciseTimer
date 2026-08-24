@@ -30,8 +30,10 @@ struct OnboardingView: View {
     private static var fullSteps: [OnboardingStep] {
         #if os(macOS)
         let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period."
+        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Reopen this guide anytime from the gear icon in the toolbar."
         #else
         let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period. You can also start and control your workout from an Apple Watch."
+        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too. Reopen this guide anytime from the gear icon in the toolbar."
         #endif
 
         return [
@@ -84,6 +86,12 @@ struct OnboardingView: View {
                 description: "Tap the share icon (↑) in the toolbar to export your exercises as a JSON file — great for backups or sharing. Tap the download icon (↓) to import exercises from a file."
             ),
             OnboardingStep(
+                symbol: "speaker.wave.2.fill",
+                color: .pink,
+                title: "Sound & Settings",
+                description: audioSettingsDescription
+            ),
+            OnboardingStep(
                 symbol: "play.circle.fill",
                 color: .green,
                 title: "Ready to Train!",
@@ -93,12 +101,20 @@ struct OnboardingView: View {
     }
 
     private static var whatsNewSteps: [OnboardingStep] {
-        [
+        // The Watch app and Heart Rate Zones both depend on WatchConnectivity/HealthKit,
+        // neither of which exist on macOS — so those two steps don't apply there.
+        #if os(macOS)
+        let introDescription = "A lot has changed since version 1.4 — here's a look at everything new, from full workout routines and circuits to Siri and Shortcuts support."
+        #else
+        let introDescription = "A lot has changed since version 1.4 — here's a look at everything new, from a smarter Apple Watch experience to full workout routines and circuits."
+        #endif
+
+        var steps: [OnboardingStep] = [
             OnboardingStep(
                 symbol: "sparkles",
                 color: .blue,
                 title: "What's New in 2.0",
-                description: "A lot has changed since version 1.4 — here's a look at everything new, from a smarter Apple Watch experience to full workout routines and circuits."
+                description: introDescription
             ),
             OnboardingStep(
                 symbol: "books.vertical.fill",
@@ -110,8 +126,12 @@ struct OnboardingView: View {
                 symbol: "link",
                 color: .pink,
                 title: "Supersets & Circuits",
-                description: "Link exercises so they run back-to-back with no rest — even a mix of timed and rep-based moves. The first exercise in a chain gets a \"Repeat Chain\" stepper controlling how many rounds the whole group performs before everyone rests together."
-            ),
+                description: "Link exercises so they run back-to-back with no rest — even a mix of timed and rep-based moves. The first exercise in a chain gets a \"Repeat Chain\" stepper to set how many rounds the whole group performs, and only the last exercise's Rest Duration applies, once per round."
+            )
+        ]
+
+        #if !os(macOS)
+        steps.append(contentsOf: [
             OnboardingStep(
                 symbol: "applewatch",
                 color: .indigo,
@@ -123,12 +143,22 @@ struct OnboardingView: View {
                 color: .red,
                 title: "Heart Rate Zones",
                 description: "See your live heart rate zone and fuel type (fat, carb, mixed) during a workout, then review a full zone breakdown with BPM ranges and time-in-zone bars in your recap."
-            ),
+            )
+        ])
+        #endif
+
+        #if os(macOS)
+        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets and duration — the moment you finish."
+        #else
+        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets, duration, and heart rate — the moment you finish."
+        #endif
+
+        steps.append(contentsOf: [
             OnboardingStep(
                 symbol: "dumbbell.fill",
                 color: .purple,
                 title: "Track Weight, Reps & Progress",
-                description: "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets, duration, and heart rate — the moment you finish."
+                description: progressDescription
             ),
             OnboardingStep(
                 symbol: "plus.square.on.square",
@@ -136,7 +166,9 @@ struct OnboardingView: View {
                 title: "Faster to Build",
                 description: "Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the question-mark button on the main screen."
             )
-        ]
+        ])
+
+        return steps
     }
 
     var body: some View {
