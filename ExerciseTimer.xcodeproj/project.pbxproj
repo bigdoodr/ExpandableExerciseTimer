@@ -562,6 +562,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
@@ -622,6 +623,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
@@ -771,6 +773,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ExpandableExerciseTimerWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
@@ -808,6 +811,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "ExpandableExerciseTimerWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";

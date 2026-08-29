@@ -332,7 +332,21 @@ struct WatchWorkoutView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                     }
-                    
+
+                    // Skip current phase — mirrors the iPhone's own Skip button; iPhone remains
+                    // the timer authority and sends the resulting state back to the watch.
+                    Button(action: {
+                        WKInterfaceDevice.current().play(.click)
+                        connectivity.sendWorkoutCommand(.skipPhase)
+                    }) {
+                        HStack {
+                            Image(systemName: "forward.fill")
+                            Text("Skip")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                    }
+
                     // End workout — shows confirmation first
                     Button(action: { showEndConfirmation = true }) {
                         HStack {

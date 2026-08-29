@@ -41,8 +41,11 @@ struct ExerciseListView: View {
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
 #if canImport(UIKit)
-    @State private var keepScreenAwake = false
-    @State private var enableBackgroundAudio = false
+    // Persisted so a preference set in Settings sticks across app launches — previously these
+    // were plain @State (always false on a fresh launch), so the settings appeared to be
+    // "forgotten" and had to be re-enabled by hand from the in-workout toggle buttons every session.
+    @AppStorage("keepScreenAwake") private var keepScreenAwake = false
+    @AppStorage("enableBackgroundAudio") private var enableBackgroundAudio = false
 #endif
 #if os(iOS)
     @State private var enableHealthKitTracking = false
@@ -1290,7 +1293,7 @@ struct WorkoutView: View {
                 Group {
                     if horizontalSizeClass == .compact {
                         VStack(spacing: 12) {
-                            HStack(spacing: 16) {
+                            HStack(spacing: 8) {
                                 pauseResumeButton
                                 skipButton
                                 cancelButton
@@ -1312,7 +1315,7 @@ struct WorkoutView: View {
                 }
                 .padding(.horizontal)
 #else
-                HStack(spacing: 16) {
+                HStack(spacing: 8) {
                     pauseResumeButton
                     skipButton
                     cancelButton
@@ -1615,7 +1618,12 @@ struct WorkoutView: View {
 #endif
         if !recapZoneSummary.isEmpty { return recapZoneSummary }
 #if canImport(HealthKit) && os(iOS)
+        // `finishedWorkout` lives on the shared HealthKitWorkoutManager singleton and is only
+        // reset by startWorkoutSession() — a workout that never enables HealthKit never calls
+        // that, so without this check a *previous* HealthKit-tracked workout's zones would
+        // still be sitting there and get shown here as if they belonged to this one.
         if #available(iOS 27.0, *),
+           healthKitEnabled,
            let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
            let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
            let zoneGroup = zoneGroups[hrType] {
@@ -1728,6 +1736,10 @@ struct WorkoutView: View {
         case .repsComplete:
             // Watch user tapped "Reps Complete" — advance and send state back
             repsCompleteTapped()
+
+        case .skipPhase:
+            // Watch user tapped "Skip" — advance and send state back, same as the iPhone's own Skip button
+            skipPhaseTapped()
             
         case .healthData(let heartRate, let activeCalories, let hrZoneIndex):
             // Receive live health data forwarded from the watch
@@ -2106,11 +2118,14 @@ struct WorkoutView: View {
             HStack {
                 Image(systemName: isPaused ? "play.fill" : "pause.fill")
                 Text(isPaused ? "Resume" : "Pause")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .font(.headline)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding()
+            .padding(.vertical, 12)
+            .padding(.horizontal, 8)
             .background(Color.orange)
             .cornerRadius(12)
         }
@@ -2121,11 +2136,14 @@ struct WorkoutView: View {
             HStack {
                 Image(systemName: "xmark.circle.fill")
                 Text("Cancel")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .font(.headline)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding()
+            .padding(.vertical, 12)
+            .padding(.horizontal, 8)
             .background(Color.red)
             .cornerRadius(12)
         }
@@ -2137,12 +2155,15 @@ struct WorkoutView: View {
         Button(action: skipPhaseTapped) {
             HStack {
                 Image(systemName: "forward.end.fill")
-                Text(isResting ? "Skip Rest" : "Skip")
+                Text("Skip")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .font(.headline)
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding()
+            .padding(.vertical, 12)
+            .padding(.horizontal, 8)
             .background(Color.orange)
             .cornerRadius(12)
         }
