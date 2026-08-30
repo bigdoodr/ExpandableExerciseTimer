@@ -741,7 +741,7 @@ struct WatchWorkoutView: View {
                 }
             }
 
-        case .healthData, .repsComplete, .zoneSummary:
+        case .healthData, .repsComplete, .skipPhase, .zoneSummary:
             break
         }
     }
