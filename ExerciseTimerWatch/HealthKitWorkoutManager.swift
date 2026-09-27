@@ -16,6 +16,10 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     /// Estimated max heart rate derived from user's date of birth (220 − age).
     /// Falls back to 185 BPM if DOB is unavailable. Used as fallback zone boundary seed.
     @Published var maxHeartRate: Double = 185.0
+    /// Most recent resting heart rate sample, used to seed an extra low "resting" zone below the
+    /// standard 50%-of-max boundary. `nil` if unavailable (permission denied, no data yet, etc.),
+    /// in which case the fallback zone config falls back to the standard 5 zones with no resting tier.
+    @Published var restingHeartRate: Double? = nil
     /// Zero-based index of the current HR zone, driven by HealthKit's live zone delegate.
     @Published var currentHRZoneIndex: Int? = nil
     /// The finished HKWorkout after endWorkout() completes; provides zoneGroupsByType for recap.
@@ -48,7 +52,8 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         let typesToRead: Set<HKObjectType> = [
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
             HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
-            HKObjectType.characteristicType(forIdentifier: .dateOfBirth)!
+            HKObjectType.characteristicType(forIdentifier: .dateOfBirth)!,
+            HKObjectType.quantityType(forIdentifier: .restingHeartRate)!
         ]
 
         do {
@@ -74,6 +79,7 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
 
         // Attempt DOB fetch regardless of write auth — characteristic reads are separate.
         fetchMaxHeartRate()
+        await fetchRestingHeartRate()
     }
 
     /// Computes max heart rate as 220 − age using the user's HealthKit date of birth.
@@ -90,6 +96,27 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             }
         } catch {
             // Keep default if DOB is unavailable or not granted
+        }
+    }
+
+    /// Fetches the most recent resting heart rate sample, used to seed an extra "resting" zone
+    /// boundary below the standard 50%-of-max cutoff. Leaves `restingHeartRate` nil on failure
+    /// (no data yet, permission denied, etc.) — callers treat that as "no resting zone available."
+    func fetchRestingHeartRate() async {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) else { return }
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        let samples: [HKSample]? = try? await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: nil, limit: 1, sortDescriptors: [sort]) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: samples)
+                }
+            }
+            healthStore.execute(query)
+        }
+        if let sample = samples?.first as? HKQuantitySample {
+            restingHeartRate = sample.quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
         }
     }
 
@@ -148,9 +175,14 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
                 if (try? await builder.zoneConfiguration(for: hrType)) == nil {
                     let bpm = HKUnit.count().unitDivided(by: .minute())
                     let maxHR = maxHeartRate
-                    let boundaries = [0.50, 0.60, 0.70, 0.85].map {
-                        HKQuantity(unit: bpm, doubleValue: maxHR * $0)
+                    var boundaryValues = [0.50, 0.60, 0.70, 0.85].map { maxHR * $0 }
+                    // Prepend a resting-HR boundary below the standard 50%-of-max cutoff when we
+                    // have a real reading for this person — splits the old catch-all zone 1 into a
+                    // distinct resting tier plus the standard Recovery zone (see recap zone list).
+                    if let restingHR = restingHeartRate, restingHR > 0, restingHR < boundaryValues[0] {
+                        boundaryValues.insert(restingHR, at: 0)
                     }
+                    let boundaries = boundaryValues.map { HKQuantity(unit: bpm, doubleValue: $0) }
                     try? await builder.setCustomZoneConfiguration(
                         HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
                         for: hrType

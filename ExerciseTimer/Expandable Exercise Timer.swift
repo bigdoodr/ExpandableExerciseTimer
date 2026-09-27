@@ -20,6 +20,9 @@ fileprivate struct WorkoutUndoAction: Codable {
     let setBefore: Int
     let wasResting: Bool
     let advancedExercise: Bool
+    /// `recapActiveTime` just before this action's advance, so undo can revert the recap
+    /// breakdown's double-count of the set that's being undone.
+    let activeTimeBefore: TimeInterval
 }
 
 @main
@@ -170,6 +173,10 @@ struct ExerciseListView: View {
         }
 #if os(iOS)
         .listStyle(.insetGrouped)
+        // Default List behavior dismisses the keyboard on any scroll, which competes with
+        // (and can win against) a tap on a button below a focused field. Interactive-only
+        // dismissal removes that competing gesture — see "intermittent tap failures" in the backlog.
+        .scrollDismissesKeyboard(.interactively)
 #else
         .listStyle(.inset)
 #endif
@@ -446,9 +453,11 @@ struct ExerciseListView: View {
                 HStack {
                     Image(systemName: "play.fill")
                     Text("Start Workout")
+                    Spacer()
                 }
                 .font(.headline)
                 .foregroundStyle(.green)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
@@ -456,15 +465,23 @@ struct ExerciseListView: View {
                 HStack {
                     Image(systemName: "folder.badge.plus")
                     Text("Save as Routine…")
+                    Spacer()
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
     }
 
     private func startOrSearchForWatch() {
+#if canImport(UIKit)
+        // A focused text field (exercise name/weight) can otherwise absorb this tap as a
+        // keyboard-dismiss rather than a button press — resign it up front so the tap that
+        // reaches here always lands cleanly. See "intermittent tap failures" in the backlog.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
 #if os(iOS)
         guard healthKitToggleTouched else {
             showHealthKitStartConfirm = true
@@ -642,6 +659,10 @@ struct ExerciseEntryView: View {
     /// True when the *next* exercise in the list continues a superset with this one — meaning this exercise has no rest of its own.
     var isSupersetAnchor: Bool = false
     @State private var isExpanded = false
+    /// Text buffer backing the weight field. Kept separate from `exercise.weight` so the default
+    /// "0" can be cleared outright on focus instead of having typed digits append to it (e.g. "025").
+    @State private var weightText: String = ""
+    @FocusState private var isWeightFieldFocused: Bool
 
     /// True when this exercise starts a multi-exercise superset chain — it owns the chain's repeat count
     /// instead of its own Number of Sets.
@@ -653,6 +674,11 @@ struct ExerciseEntryView: View {
     /// since chain members each perform one set per round.
     private var isGroupedNonHead: Bool {
         exercise.isSupersetContinuation
+    }
+
+    /// Renders a weight value the same way whether it's a whole number or has a fractional part.
+    private func formattedWeight(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(value))" : String(format: "%.1f", value)
     }
 
     @ViewBuilder
@@ -751,6 +777,28 @@ struct ExerciseEntryView: View {
                             Text("Each linked exercise performs one set per round.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+
+                            Toggle(isOn: Binding(
+                                get: { exercise.groupTimeBudget != nil },
+                                set: { exercise.groupTimeBudget = $0 ? (exercise.groupTimeBudget ?? 300) : nil }
+                            )) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "timer")
+                                        .foregroundStyle(.purple)
+                                    Text("Timed Superset")
+                                }
+                            }
+                            .padding(.top, 4)
+
+                            if exercise.groupTimeBudget != nil {
+                                DurationPickerView(title: "Time Budget per Round", duration: Binding(
+                                    get: { exercise.groupTimeBudget ?? 300 },
+                                    set: { exercise.groupTimeBudget = $0 }
+                                ))
+                                Text("Complete every linked exercise within this time, back-to-back — any time left over becomes rest before the next round.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     } else if isGroupedNonHead {
                         VStack(alignment: .leading, spacing: 4) {
@@ -799,21 +847,21 @@ struct ExerciseEntryView: View {
 
                     if isSupersetAnchor {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Rest Duration")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            HStack(spacing: 8) {
-                                Image(systemName: "link")
-                                    .foregroundStyle(.purple)
-                                Text("No rest — continues straight into the linked superset exercise.")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
+                            DurationPickerView(title: "Rest Before Next Exercise", duration: $exercise.restDuration)
+                            if exercise.restDuration == 0 {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "link")
+                                        .foregroundStyle(.purple)
+                                    Text("No rest — continues straight into the linked superset exercise.")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.purple.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.purple.opacity(0.08))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
                     } else {
                         DurationPickerView(title: "Rest Duration", duration: $exercise.restDuration)
@@ -825,15 +873,33 @@ struct ExerciseEntryView: View {
                             .foregroundStyle(.secondary)
                         if exercise.weight != nil {
                             HStack(spacing: 8) {
-                                TextField("0", value: Binding(
-                                    get: { exercise.weight ?? 0 },
-                                    set: { exercise.weight = max(0, $0) }
-                                ), format: .number)
+                                TextField("0", text: $weightText)
 #if os(iOS)
                                 .keyboardType(.decimalPad)
 #endif
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: 90)
+                                .focused($isWeightFieldFocused)
+                                .onAppear {
+                                    weightText = formattedWeight(exercise.weight ?? 0)
+                                }
+                                .onChange(of: isWeightFieldFocused) { _, focused in
+                                    if focused {
+                                        // Replace the default "0" outright instead of letting typed digits append to it.
+                                        if weightText == "0" {
+                                            weightText = ""
+                                        }
+                                    } else {
+                                        let parsed = max(0, Double(weightText) ?? 0)
+                                        exercise.weight = parsed
+                                        weightText = formattedWeight(parsed)
+                                    }
+                                }
+                                .onChange(of: weightText) { _, newValue in
+                                    if let parsed = Double(newValue) {
+                                        exercise.weight = max(0, parsed)
+                                    }
+                                }
 
                                 Picker("Unit", selection: $exercise.weightUnit) {
                                     Text("LB").tag(WeightUnit.lbs)
@@ -1027,7 +1093,8 @@ struct DurationPickerView: View {
 }
 
 struct WorkoutView: View {
-    let exercises: [Exercise]
+    /// Mutable (not `let`) so weight can be adjusted for the next set/round mid-session — see `updateCurrentExerciseWeight`.
+    @State private var exercises: [Exercise]
     @Binding var isActive: Bool
 #if canImport(UIKit)
     @Binding var keepScreenAwake: Bool
@@ -1036,6 +1103,31 @@ struct WorkoutView: View {
 #if canImport(HealthKit)
     var healthKitEnabled: Bool
     var activityType: WorkoutActivityOption
+#endif
+
+    // Split into separate whole declarations per platform combo — `#if` inside a single
+    // parameter list isn't reliably supported by the compiler's parser.
+#if canImport(UIKit) && canImport(HealthKit)
+    init(exercises: [Exercise], isActive: Binding<Bool>, keepScreenAwake: Binding<Bool>, enableBackgroundAudio: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption) {
+        self._exercises = State(initialValue: exercises)
+        self._isActive = isActive
+        self._keepScreenAwake = keepScreenAwake
+        self._enableBackgroundAudio = enableBackgroundAudio
+        self.healthKitEnabled = healthKitEnabled
+        self.activityType = activityType
+    }
+#elseif canImport(HealthKit)
+    init(exercises: [Exercise], isActive: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption) {
+        self._exercises = State(initialValue: exercises)
+        self._isActive = isActive
+        self.healthKitEnabled = healthKitEnabled
+        self.activityType = activityType
+    }
+#else
+    init(exercises: [Exercise], isActive: Binding<Bool>) {
+        self._exercises = State(initialValue: exercises)
+        self._isActive = isActive
+    }
 #endif
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
@@ -1053,7 +1145,34 @@ struct WorkoutView: View {
     @State private var isCompleted = false
     @State private var isExiting = false
     @State private var pausedTimeRemaining: TimeInterval? = nil
-    
+    /// True while `isResting` is a rest *between* two linked superset/circuit exercises (not the
+    /// rest after the group's last exercise finishes a round). Set right before entering that rest
+    /// phase so `timerExpired()` knows to resume at the next chain member instead of looping the group.
+    @State private var restAdvancesWithinGroup = false
+    /// Deadline for the current round of a Timed Superset group (`groupTimeBudget` on the group's
+    /// first exercise) — re-armed in `startCurrentPhase()` whenever a fresh round begins.
+    @State private var groupRoundEndDate: Date? = nil
+    /// Overrides `currentExercise.restDuration` for the rest phase currently in progress, used only
+    /// for a Timed Superset's between-round rest (whatever's left of the round's time budget).
+    /// `nil` means the rest phase uses the exercise's own configured `restDuration`, as usual.
+    @State private var currentRestDurationOverride: TimeInterval? = nil
+    /// Backs the mid-session "adjust weight" sheet — see `beginEditingWeight`/`updateCurrentExerciseWeight`.
+    @State private var showWeightEditor = false
+    @State private var weightEditText = ""
+    @State private var weightEditUnit: WeightUnit = .lbs
+
+    /// Wall-clock timestamp of when the current phase (exercise or rest) began — used only to
+    /// measure elapsed time for rep-based exercises, which have no countdown of their own.
+    @State private var phaseStartDate: Date = .now
+    /// Set right before calling `timerExpired()` from `skipPhaseTapped()` so the phase-ending
+    /// recorders can tell a manual skip apart from a natural completion. Cleared once read.
+    @State private var isSkippingCurrentPhase = false
+    /// Recap breakdown accumulators — see `recordActivePhaseEnding`/`recordRestPhaseEnding`.
+    @State private var recapActiveTime: TimeInterval = 0
+    @State private var recapRestTime: TimeInterval = 0
+    @State private var recapExercisesSkipped = 0
+    @State private var recapRestTimeSkipped: TimeInterval = 0
+
     @State private var undoAction: WorkoutUndoAction? = nil
     @State private var showUndoToast = false
     @State private var showCancelConfirmation = false
@@ -1095,6 +1214,24 @@ struct WorkoutView: View {
         return exercises.supersetGroupRange(containing: safeIndex)
     }
 
+    /// Live "time left in this round" for a Timed Superset group, or nil when the group currently
+    /// in progress doesn't use a shared time budget (`groupTimeBudget`).
+    var groupRoundTimeRemaining: TimeInterval? {
+        guard exercises[currentGroupRange.lowerBound].groupTimeBudget != nil,
+              let endDate = groupRoundEndDate else { return nil }
+        return max(0, endDate.timeIntervalSinceNow)
+    }
+
+    @ViewBuilder
+    private func timedSupersetRoundBadge(timeRemaining: TimeInterval) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "timer")
+            Text("\(formatTime(timeRemaining)) left in round")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+    }
+
     var displayExerciseNumber: Int {
         guard !exercises.isEmpty else { return 0 }
         let idx = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
@@ -1106,6 +1243,10 @@ struct WorkoutView: View {
         guard !isCompleted else { return "" }
         let groupRange = currentGroupRange
         let roundCount = exercises.roundCount(for: groupRange)
+        // Timed Superset: the group shares one time budget per round instead of each member's
+        // own `restDuration` — see `groupTimeBudget` and `advancePastCompletedSet`.
+        let groupTimeBudget = exercises[groupRange.lowerBound].groupTimeBudget
+        let remainingRoundTime = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? 0)
 
         func nextExerciseAfterGroupText() -> String {
             let nextIndex = groupRange.upperBound + 1
@@ -1119,7 +1260,15 @@ struct WorkoutView: View {
         }
 
         if isResting {
-            // Rest only ever happens after the last exercise in a group finishes a round.
+            if restAdvancesWithinGroup {
+                // Mid-chain rest — next up is simply the next linked exercise, not a round loop.
+                let nextIndex = currentExerciseIndex + 1
+                let next = exercises[nextIndex]
+                let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
+                let nextSummary = next.quickSummary
+                return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
+            }
+            // Otherwise, rest happens after the last exercise in the group finishes a round.
             let nextSet = currentSet + 1
             if nextSet <= roundCount {
                 // Another round — loop back to the first exercise in the group.
@@ -1134,7 +1283,11 @@ struct WorkoutView: View {
                 return nextExerciseAfterGroupText()
             }
         } else if currentExerciseIndex < groupRange.upperBound {
-            // More linked exercises remain this round — no rest before them.
+            // More linked exercises remain this round. A timed superset always continues straight
+            // into the next one — only a normal chain's own `restDuration` inserts a rest here.
+            if groupTimeBudget == nil, currentExercise.restDuration > 0 {
+                return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
+            }
             let nextIndex = currentExerciseIndex + 1
             let next = exercises[nextIndex]
             let nextName = next.name.isEmpty ? "Exercise \(nextIndex + 1)" : next.name
@@ -1142,14 +1295,18 @@ struct WorkoutView: View {
             return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
         } else if currentSet < roundCount {
             // Last exercise in the group, but more rounds remain
-            if currentExercise.restDuration > 0 {
+            if groupTimeBudget != nil {
+                return remainingRoundTime > 0 ? "Up Next: Rest (\(formatTime(remainingRoundTime)))" : "Up Next: Round \(currentSet + 1)"
+            } else if currentExercise.restDuration > 0 {
                 return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
             } else {
                 return "Up Next: Round \(currentSet + 1)"
             }
         } else {
             // Final round of the final exercise in the group
-            if currentExercise.restDuration > 0 {
+            if groupTimeBudget != nil {
+                return remainingRoundTime > 0 ? "Up Next: Rest (\(formatTime(remainingRoundTime)))" : nextExerciseAfterGroupText()
+            } else if currentExercise.restDuration > 0 {
                 return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
             } else {
                 return nextExerciseAfterGroupText()
@@ -1175,6 +1332,9 @@ struct WorkoutView: View {
         } message: {
             Text("Are you sure you want to end this workout?")
         }
+        .sheet(isPresented: $showWeightEditor) {
+            weightEditorSheet
+        }
     }
 
     private var workoutContent: some View {
@@ -1198,18 +1358,38 @@ struct WorkoutView: View {
                         .font(.title2)
                         .foregroundStyle(.secondary)
 
-                    if let weight = currentExercise.weight {
-                        Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight))
-                            .font(.title3)
-                            .bold()
-                            .foregroundStyle(.blue)
-                    }
+                    // Reps and weight share one line (e.g. "10 reps @ 50 LB") rather than stacking separately.
+                    HStack(spacing: 6) {
+                        if !currentExercise.isTimeBased, let reps = currentExercise.targetReps {
+                            Text("\(reps) reps")
+                                .font(.title3)
+                                .bold()
+                                .foregroundStyle(.purple)
+                        }
 
-                    if !currentExercise.isTimeBased, let reps = currentExercise.targetReps {
-                        Text("\(reps) reps")
-                            .font(.title3)
-                            .bold()
-                            .foregroundStyle(.purple)
+                        if let weight = currentExercise.weight {
+                            if !currentExercise.isTimeBased, currentExercise.targetReps != nil {
+                                Text("@")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                            }
+                            // Tappable so weight can be adjusted mid-session (e.g. a set turns out too heavy/light)
+                            // without ending the workout — see `updateCurrentExerciseWeight`.
+                            Button {
+                                beginEditingWeight()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight))
+                                        .font(.title3)
+                                        .bold()
+                                        .foregroundStyle(.blue)
+                                    Image(systemName: "pencil.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.blue.opacity(0.6))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
                 .padding()
@@ -1232,10 +1412,14 @@ struct WorkoutView: View {
                             .font(.title)
                             .bold()
                             .foregroundStyle(.green)
-                        
+
                         Text(formatTime(timeRemaining))
                             .font(.system(size: 72, weight: .bold, design: .rounded))
                             .monospacedDigit()
+
+                        if let roundTimeRemaining = groupRoundTimeRemaining {
+                            timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
+                        }
                     }
                     .padding()
                 } else {
@@ -1244,6 +1428,10 @@ struct WorkoutView: View {
                             .font(.title)
                             .bold()
                             .foregroundStyle(.blue)
+
+                        if let roundTimeRemaining = groupRoundTimeRemaining {
+                            timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
+                        }
 
                         if let targetReps = currentExercise.targetReps {
                             Text("Target: \(targetReps) reps")
@@ -1462,7 +1650,29 @@ struct WorkoutView: View {
                         let totalSets = exercises.indices.reduce(0) { $0 + effectiveSets(at: $1) }
                         recapRow(icon: "repeat", color: .purple,
                                  label: "Sets", value: "\(recapSetsCompleted) of \(totalSets)")
-                        
+
+                        Divider()
+
+                        recapRow(icon: "figure.run", color: .green,
+                                 label: "Active Time", value: formatTime(recapActiveTime))
+
+                        Divider()
+
+                        recapRow(icon: "bed.double.fill", color: .blue,
+                                 label: "Rest Time", value: formatTime(recapRestTime))
+
+                        if recapExercisesSkipped > 0 {
+                            Divider()
+                            recapRow(icon: "forward.end.fill", color: .orange,
+                                     label: "Exercises Skipped", value: "\(recapExercisesSkipped)")
+                        }
+
+                        if recapRestTimeSkipped > 0 {
+                            Divider()
+                            recapRow(icon: "forward.end.fill", color: .orange,
+                                     label: "Rest Skipped", value: formatTime(recapRestTimeSkipped))
+                        }
+
 #if canImport(HealthKit)
                         if recapHeartRate > 0 {
                             Divider()
@@ -1483,10 +1693,16 @@ struct WorkoutView: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            // A 6th (lowest) zone means HealthKitWorkoutManager prepended a resting-HR
+                            // boundary — show it as a distinct "Resting" tier rather than "Zone 1".
+                            // (A person's own custom Health-app zone config could coincidentally also
+                            // have 6 zones; this only affects the label, not the underlying data.)
+                            let hasRestingZone = zoneEntries.count == 6
                             ForEach(zoneEntries, id: \.zoneIndex) { entry in
                                 if entry.zoneIndex > 0 { Divider() }
-                                let zoneNum = entry.zoneIndex + 1
-                                let color = hrZoneColor(zoneNum)
+                                let isRestingZone = hasRestingZone && entry.zoneIndex == 0
+                                let zoneNum = hasRestingZone ? entry.zoneIndex : entry.zoneIndex + 1
+                                let color = isRestingZone ? Color.gray : hrZoneColor(zoneNum)
                                 let minBPM = entry.minBPM.map { Int($0) }
                                 let maxBPM = entry.maxBPM.map { Int($0) }
                                 let bpmLabel: String = {
@@ -1503,7 +1719,7 @@ struct WorkoutView: View {
                                             .fill(color)
                                             .frame(width: 4, height: 20)
                                         VStack(alignment: .leading, spacing: 2) {
-                                            Text("Zone \(zoneNum)")
+                                            Text(isRestingZone ? "Resting" : "Zone \(zoneNum)")
                                                 .font(.subheadline)
                                             if !bpmLabel.isEmpty {
                                                 Text(bpmLabel)
@@ -1645,6 +1861,18 @@ struct WorkoutView: View {
         recapDuration = Date().timeIntervalSince(workoutStartDate)
         recapCompletedNaturally = completedNaturally
 
+        if !completedNaturally {
+            // Count whatever time had already elapsed in the in-progress phase before the
+            // workout was cut short — otherwise Active + Rest Time would fall short of Duration.
+            if isResting {
+                recapRestTime += max(0, (currentRestDurationOverride ?? currentExercise.restDuration) - timeRemaining)
+            } else if currentExercise.isTimeBased {
+                recapActiveTime += max(0, currentExercise.exerciseDuration - timeRemaining)
+            } else {
+                recapActiveTime += max(0, Date().timeIntervalSince(phaseStartDate))
+            }
+        }
+
         if completedNaturally {
             recapExercisesCompleted = exercises.count
             recapSetsCompleted = exercises.indices.reduce(0) { $0 + effectiveSets(at: $1) }
@@ -1764,6 +1992,10 @@ struct WorkoutView: View {
 
         case .wake:
             break
+
+        case .updateWeight:
+            // iPhone/Mac is the source of truth for weight changes — it never receives this from the watch.
+            break
         }
     }
 #endif
@@ -1799,9 +2031,19 @@ struct WorkoutView: View {
     func startCurrentPhase() {
         if isCompleted { return }
         pausedTimeRemaining = nil
+        phaseStartDate = Date()
+        if !isResting {
+            // Any rest-duration override only applies to the rest phase it was computed for.
+            currentRestDurationOverride = nil
+            // Re-arm the Timed Superset round deadline whenever a fresh round begins.
+            let groupRange = currentGroupRange
+            if currentExerciseIndex == groupRange.lowerBound, let budget = exercises[groupRange.lowerBound].groupTimeBudget {
+                groupRoundEndDate = Date().addingTimeInterval(budget)
+            }
+        }
         var duration: TimeInterval = 0
         if isResting {
-            duration = currentExercise.restDuration
+            duration = currentRestDurationOverride ?? currentExercise.restDuration
         } else if currentExercise.isTimeBased {
             duration = currentExercise.exerciseDuration
         } else {
@@ -1827,8 +2069,17 @@ struct WorkoutView: View {
         playSound()
 
         if isResting {
+            recordRestPhaseEnding()
             isResting = false
-            advancePastRest(groupRange: currentGroupRange)
+            if restAdvancesWithinGroup {
+                // Rest was between two linked exercises, not after the group's last one —
+                // just move on to the next chain member, no round-loop logic involved.
+                restAdvancesWithinGroup = false
+                currentExerciseIndex += 1
+                startCurrentPhase()
+            } else {
+                advancePastRest(groupRange: currentGroupRange)
+            }
         } else {
             advancePastCompletedSet()
         }
@@ -1838,27 +2089,79 @@ struct WorkoutView: View {
     /// and advance immediately. Reuses `timerExpired()` so behavior (including its guards
     /// against skipping while exiting or already completed) matches a phase finishing naturally.
     func skipPhaseTapped() {
+        isSkippingCurrentPhase = true
         timerExpired()
 #if canImport(WatchConnectivity)
         sendStateToWatch()
 #endif
     }
 
+    /// Records the rest phase that's about to end (naturally or via skip) toward the recap
+    /// breakdown. Must run before `isResting`/`currentExerciseIndex` change, while `currentExercise`
+    /// still refers to the exercise this rest followed.
+    private func recordRestPhaseEnding() {
+        let wasSkipped = isSkippingCurrentPhase
+        isSkippingCurrentPhase = false
+        let configuredDuration = currentRestDurationOverride ?? currentExercise.restDuration
+        recapRestTime += max(0, configuredDuration - timeRemaining)
+        if wasSkipped {
+            recapRestTimeSkipped += max(0, timeRemaining)
+        }
+    }
+
+    /// Records the exercise phase that's about to end (naturally, via skip, or via "Reps Complete")
+    /// toward the recap breakdown. Must run before `currentExerciseIndex`/`currentSet` change.
+    /// Timed exercises measure elapsed time from the countdown (which already accounts for pauses);
+    /// rep-based exercises have no countdown, so wall-clock time since the phase started is used instead.
+    private func recordActivePhaseEnding() {
+        let wasSkipped = isSkippingCurrentPhase
+        isSkippingCurrentPhase = false
+        if currentExercise.isTimeBased {
+            recapActiveTime += max(0, currentExercise.exerciseDuration - timeRemaining)
+        } else {
+            recapActiveTime += max(0, Date().timeIntervalSince(phaseStartDate))
+        }
+        if wasSkipped {
+            recapExercisesSkipped += 1
+        }
+    }
+
     /// Called when the current exercise's work phase finishes (a timer expiring, or a "Reps Complete" tap).
-    /// Superset partners run back-to-back with no rest between them; rest only happens after the
-    /// last exercise in the group finishes each round.
+    /// Superset/circuit partners each use their own `restDuration` between them (0 means continue
+    /// straight into the next one); the group's last exercise separately rests between rounds.
     private func advancePastCompletedSet() {
+        recordActivePhaseEnding()
         let groupRange = currentGroupRange
+        // Timed Superset: the group shares one time budget per round instead of each member's own
+        // `restDuration` — members always run back-to-back, and any budget left over once the last
+        // one finishes becomes the round's rest. See `groupTimeBudget`.
+        let groupTimeBudget = exercises[groupRange.lowerBound].groupTimeBudget
+
         if currentExerciseIndex < groupRange.upperBound {
-            // More linked exercises remain this round — move on immediately, no rest.
-            currentExerciseIndex += 1
-            isResting = false
-            startCurrentPhase()
+            // More linked exercises remain this round.
+            if groupTimeBudget == nil, currentExercise.restDuration > 0 {
+                isResting = true
+                restAdvancesWithinGroup = true
+                startCurrentPhase()
+            } else {
+                currentExerciseIndex += 1
+                isResting = false
+                startCurrentPhase()
+            }
             return
         }
 
         // Finished the last exercise in the group for this round.
-        if currentExercise.restDuration > 0 {
+        if let groupTimeBudget {
+            let remaining = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? groupTimeBudget)
+            if remaining > 0 {
+                currentRestDurationOverride = remaining
+                isResting = true
+                startCurrentPhase()
+            } else {
+                advancePastRest(groupRange: groupRange)
+            }
+        } else if currentExercise.restDuration > 0 {
             isResting = true
             startCurrentPhase()
         } else {
@@ -1904,6 +2207,7 @@ struct WorkoutView: View {
         let prevExerciseIndex = currentExerciseIndex
         let prevSet = currentSet
         let prevWasResting = isResting
+        let prevActiveTime = recapActiveTime
         // Determine whether this tap will advance to next exercise immediately (no rest)
         let willAdvanceExercise: Bool = {
             if currentSet < currentExercise.sets { return false }
@@ -1914,7 +2218,7 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
         sendStateToWatch()
 #endif
-        undoAction = WorkoutUndoAction(exerciseIndex: prevExerciseIndex, setBefore: prevSet, wasResting: prevWasResting, advancedExercise: willAdvanceExercise)
+        undoAction = WorkoutUndoAction(exerciseIndex: prevExerciseIndex, setBefore: prevSet, wasResting: prevWasResting, advancedExercise: willAdvanceExercise, activeTimeBefore: prevActiveTime)
         withAnimation { showUndoToast = true }
         // Auto-hide after 4 seconds
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
@@ -1930,6 +2234,9 @@ struct WorkoutView: View {
         currentSet = action.setBefore
         isResting = false
         isCompleted = false
+        // Undo the recap breakdown's contribution from the set that's being undone.
+        recapActiveTime = action.activeTimeBefore
+        phaseStartDate = Date()
 
         // For rep-based, return to pre-rest state (no active timer)
         timeRemaining = 0
@@ -1937,7 +2244,68 @@ struct WorkoutView: View {
         undoAction = nil
         withAnimation { showUndoToast = false }
     }
-    
+
+    /// Opens the mid-session weight-adjustment sheet, seeded with the current exercise's weight.
+    func beginEditingWeight() {
+        weightEditUnit = currentExercise.weightUnit
+        if let weight = currentExercise.weight {
+            weightEditText = weight.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(weight))" : String(format: "%.1f", weight)
+        } else {
+            weightEditText = ""
+        }
+        showWeightEditor = true
+    }
+
+    /// Applies a mid-session weight change to the exercise currently in progress (e.g. a set turned
+    /// out too heavy/light) and mirrors it to the watch, which otherwise has no way to learn about it.
+    func updateCurrentExerciseWeight(_ weight: Double?, unit: WeightUnit) {
+        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
+        guard exercises.indices.contains(safeIndex) else { return }
+        exercises[safeIndex].weight = weight
+        exercises[safeIndex].weightUnit = unit
+#if canImport(WatchConnectivity)
+        WatchConnectivityManager.shared.sendWorkoutCommand(.updateWeight(exerciseIndex: safeIndex, weight: weight, weightUnit: unit))
+#endif
+    }
+
+    private var weightEditorSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack(spacing: 8) {
+                        TextField("0", text: $weightEditText)
+#if os(iOS)
+                            .keyboardType(.decimalPad)
+#endif
+                        Picker("Unit", selection: $weightEditUnit) {
+                            Text("LB").tag(WeightUnit.lbs)
+                            Text("KG").tag(WeightUnit.kg)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 120)
+                    }
+                }
+            }
+            .navigationTitle("Adjust Weight")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showWeightEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let parsed = Double(weightEditText)
+                        updateCurrentExerciseWeight(parsed.map { max(0, $0) }, unit: weightEditUnit)
+                        showWeightEditor = false
+                    }
+                }
+            }
+        }
+    }
+
+
     func formatTime(_ time: TimeInterval) -> String {
         let hours = Int(time) / 3600
         let minutes = (Int(time) % 3600) / 60

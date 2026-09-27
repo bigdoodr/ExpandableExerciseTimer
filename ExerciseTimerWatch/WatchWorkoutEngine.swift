@@ -87,7 +87,14 @@ final class WatchWorkoutEngine: ObservableObject {
             self.timeRemaining = max(0, endDate.timeIntervalSinceNow)
         }
     }
-    
+
+    /// Mirrors a mid-session weight change made on iPhone/Mac — see `WorkoutCommand.updateWeight`.
+    func applyWeightUpdate(exerciseIndex: Int, weight: Double?, weightUnit: WeightUnit) {
+        guard exercises.indices.contains(exerciseIndex) else { return }
+        exercises[exerciseIndex].weight = weight
+        exercises[exerciseIndex].weightUnit = weightUnit
+    }
+
     // MARK: - Up Next Text
     
     var upNextText: String {
@@ -95,6 +102,11 @@ final class WatchWorkoutEngine: ObservableObject {
         let safeIndex = min(max(0, currentExerciseIndex), exercises.count - 1)
         let groupRange = exercises.supersetGroupRange(containing: safeIndex)
         let roundCount = exercises.roundCount(for: groupRange)
+        // Timed Superset: members run back-to-back regardless of their own restDuration, and the
+        // iPhone (timer authority) uses whatever's left of the round's time budget as the
+        // between-round rest — see `Exercise.groupTimeBudget`. The exact remaining amount isn't
+        // mirrored here, so this just predicts "a rest is coming" without a duration.
+        let isTimedSuperset = exercises[groupRange.lowerBound].groupTimeBudget != nil
 
         func nextExerciseAfterGroupText() -> String {
             let nextIndex = groupRange.upperBound + 1
@@ -119,17 +131,25 @@ final class WatchWorkoutEngine: ObservableObject {
                 return nextExerciseAfterGroupText()
             }
         } else if currentExerciseIndex < groupRange.upperBound {
-            // More linked exercises remain this round — no rest before them.
+            // More linked exercises remain this round. A timed superset always continues straight
+            // into the next one; otherwise the exercise's own restDuration may insert a rest here.
+            if !isTimedSuperset, exercise.restDuration > 0 {
+                return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
+            }
             let nextIndex = currentExerciseIndex + 1
             return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
         } else if currentSet < roundCount {
-            if exercise.restDuration > 0 {
+            if isTimedSuperset {
+                return "Up Next: Rest, then Round \(currentSet + 1)"
+            } else if exercise.restDuration > 0 {
                 return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
             } else {
                 return "Up Next: Round \(currentSet + 1)"
             }
         } else {
-            if exercise.restDuration > 0 {
+            if isTimedSuperset {
+                return "Up Next: Rest"
+            } else if exercise.restDuration > 0 {
                 return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
             } else {
                 return nextExerciseAfterGroupText()

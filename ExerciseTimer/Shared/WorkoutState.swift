@@ -27,6 +27,10 @@ enum WorkoutCommand: Codable, Equatable {
     /// the session can read `HKWorkout.zoneGroupsByType`, so the data has to be forwarded as plain values.
     /// `workoutID` must match the `.start` that began the session it was computed from.
     case zoneSummary(zones: [HRZoneRecapEntry], workoutID: UUID)
+    /// Sent from iPhone/Mac to watch when the weight for an exercise is adjusted mid-session
+    /// (e.g. realizing a set is too heavy/light and changing it for the next set/round).
+    /// `weight` of `nil` clears it. iPhone/Mac remains the source of truth — the watch only mirrors this.
+    case updateWeight(exerciseIndex: Int, weight: Double?, weightUnit: WeightUnit)
 }
 
 /// A single HR zone's time-in-zone, computed by the device that owns the HealthKit workout session and
