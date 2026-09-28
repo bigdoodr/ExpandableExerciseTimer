@@ -25,9 +25,14 @@ struct Exercise: Identifiable, Codable, Equatable {
     /// of a chain (the one where `isSupersetContinuation == false` but the next exercise continues from it);
     /// ignored everywhere else. Decoupled from `sets`, which each chain member performs once per round.
     var chainRepeatCount: Int = 1
+    /// "Timed Superset" mode: a shared time budget for one full round of a chain (e.g. 5 minutes to
+    /// complete 8x Bench, 12x Pullovers, 15x Pushups), with any time left over counted as rest before
+    /// the next round. Same scoping as `chainRepeatCount` — only meaningful on a chain's first exercise.
+    /// `nil` means the chain uses each member's own `restDuration` between exercises, as usual.
+    var groupTimeBudget: TimeInterval? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, name, isTimeBased, sets, exerciseDuration, restDuration, targetReps, targetRepsMax, weight, weightUnit, notes, isSupersetContinuation, chainRepeatCount
+        case id, name, isTimeBased, sets, exerciseDuration, restDuration, targetReps, targetRepsMax, weight, weightUnit, notes, isSupersetContinuation, chainRepeatCount, groupTimeBudget
     }
 
     init() {}
@@ -47,6 +52,7 @@ struct Exercise: Identifiable, Codable, Equatable {
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
         isSupersetContinuation = try container.decodeIfPresent(Bool.self, forKey: .isSupersetContinuation) ?? false
         chainRepeatCount = try container.decodeIfPresent(Int.self, forKey: .chainRepeatCount) ?? 1
+        groupTimeBudget = try container.decodeIfPresent(TimeInterval.self, forKey: .groupTimeBudget)
     }
 
     /// A compact "weight · reps" summary for use in "Up Next" labels.

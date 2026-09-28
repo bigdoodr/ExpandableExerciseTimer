@@ -475,13 +475,20 @@ struct WatchWorkoutView: View {
                         Text("Heart Rate Zones")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                        // A 6th (lowest) zone means HealthKitWorkoutManager prepended a resting-HR
+                        // boundary — show it as a distinct "Resting" tier rather than "Z1". (A
+                        // person's own custom Health-app zone config could coincidentally also have
+                        // 6 zones; this only affects the label, not the underlying data.)
+                        let hasRestingZone = zoneGroup.zoneDurations.count == 6
                         ForEach(Array(zoneGroup.zoneDurations.enumerated()), id: \.offset) { index, zoneDuration in
+                            let isRestingZone = hasRestingZone && index == 0
+                            let zoneNum = hasRestingZone ? index : index + 1
                             HStack {
-                                Text("Z\(index + 1)")
+                                Text(isRestingZone ? "Rest" : "Z\(zoneNum)")
                                     .font(.caption2)
                                     .bold()
-                                    .foregroundStyle(hrZoneColor(index + 1))
-                                    .frame(width: 22, alignment: .leading)
+                                    .foregroundStyle(isRestingZone ? .gray : hrZoneColor(zoneNum))
+                                    .frame(width: 26, alignment: .leading)
                                 Spacer()
                                 Text(engine.formatTime(zoneDuration.duration))
                                     .font(.caption2)
@@ -740,6 +747,9 @@ struct WatchWorkoutView: View {
                     await healthKit.prepareWorkoutSession(with: config)
                 }
             }
+
+        case .updateWeight(let exerciseIndex, let weight, let weightUnit):
+            engine.applyWeightUpdate(exerciseIndex: exerciseIndex, weight: weight, weightUnit: weightUnit)
 
         case .healthData, .repsComplete, .skipPhase, .zoneSummary:
             break
