@@ -188,8 +188,7 @@ struct ExerciseListView: View {
     
     private var builderView: some View {
         List {
-            exerciseListSection
-            addExerciseSection
+            ExerciseListEditor(exercises: $exercises)
 #if os(iOS)
             healthKitSection
 #endif
@@ -292,13 +291,13 @@ struct ExerciseListView: View {
                 onLoad: { loadedExercises in
                     exercises = loadedExercises
                     loadedRoutineID = nil
-                    normalizeSupersets()
+                    exercises.normalizeSupersets()
                     showRoutineSheet = false
                 },
                 onLoadSaved: { routine in
                     exercises = routine.exercises
                     loadedRoutineID = routine.id
-                    normalizeSupersets()
+                    exercises.normalizeSupersets()
                     showRoutineSheet = false
                 },
                 onSaved: { updated in
@@ -356,108 +355,6 @@ struct ExerciseListView: View {
             markOnboardingSeen()
         }) {
             OnboardingView(mode: onboardingMode)
-        }
-    }
-    
-    @ViewBuilder
-    private var exerciseListSection: some View {
-        Section {
-            ForEach(Array(exercises.indices), id: \.self) { index in
-                let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
-                ExerciseEntryRow(exercise: $exercises[index], isSupersetAnchor: isAnchor)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        if index > 0 {
-                            Button {
-                                exercises[index].isSupersetContinuation.toggle()
-                                normalizeSupersets()
-                            } label: {
-                                Label(
-                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset",
-                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
-                                )
-                            }
-                            .tint(.purple)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            exercises.remove(at: index)
-                            normalizeSupersets()
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        Button {
-                            var copy = exercises[index]
-                            copy.id = UUID()
-                            exercises.insert(copy, at: index + 1)
-                        } label: {
-                            Label("Duplicate", systemImage: "plus.square.on.square")
-                        }
-                        .tint(.blue)
-                    }
-                    .contextMenu {
-                        Button {
-                            var copy = exercises[index]
-                            copy.id = UUID()
-                            exercises.insert(copy, at: index + 1)
-                        } label: {
-                            Label("Duplicate", systemImage: "plus.square.on.square")
-                        }
-                        if index > 0 {
-                            Button {
-                                exercises[index].isSupersetContinuation.toggle()
-                                normalizeSupersets()
-                            } label: {
-                                Label(
-                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset with Previous",
-                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
-                                )
-                            }
-                        }
-                    }
-            }
-            .onMove { (indices: IndexSet, newOffset: Int) in
-                exercises.move(fromOffsets: indices, toOffset: newOffset)
-                normalizeSupersets()
-            }
-            .onDelete { (indexSet: IndexSet) in
-                exercises.remove(atOffsets: indexSet)
-                normalizeSupersets()
-            }
-        }
-    }
-
-    /// Enforces the superset invariants after any edit to the exercise list:
-    /// - A superset marker on the first exercise means "linked to nothing" — not valid.
-    /// - An exercise immediately followed by a superset continuation has no rest of its own
-    ///   (rest lives on the chain's last exercise instead).
-    private func normalizeSupersets() {
-        guard exercises.indices.contains(0) else { return }
-        if exercises[0].isSupersetContinuation {
-            exercises[0].isSupersetContinuation = false
-        }
-        for index in exercises.indices {
-            let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
-            if isAnchor && exercises[index].restDuration != 0 {
-                exercises[index].restDuration = 0
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var addExerciseSection: some View {
-        Section {
-            Button(action: {
-                exercises.append(Exercise())
-            }) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text("Add Exercise")
-                }
-                .font(.headline)
-                .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -565,20 +462,7 @@ struct ExerciseListView: View {
 #endif
         isWorkoutActive = true
     }
-    
-    // Helper row to reduce type-checker load
-    private struct ExerciseEntryRow: View {
-        @Binding var exercise: Exercise
-        var isSupersetAnchor: Bool = false
 
-        var body: some View {
-            ExerciseEntryView(exercise: $exercise, isSupersetAnchor: isSupersetAnchor)
-#if os(macOS)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-#endif
-        }
-    }
-    
     func exportExercises() {
         persistExercises()
         exportDocument = ExerciseDocument(exercises: exercises)
@@ -600,7 +484,7 @@ struct ExerciseListView: View {
             let decoded = try JSONDecoder().decode([Exercise].self, from: data)
             exercises = decoded
             loadedRoutineID = nil
-            normalizeSupersets()
+            exercises.normalizeSupersets()
             persistExercises()
         } catch {
             print("Failed to import: \(error)")
@@ -632,7 +516,7 @@ struct ExerciseListView: View {
         if let data = UserDefaults.standard.data(forKey: exercisesDefaultsKey) {
             if let decoded = try? JSONDecoder().decode([Exercise].self, from: data) {
                 exercises = decoded
-                normalizeSupersets()
+                exercises.normalizeSupersets()
             }
         }
     }
@@ -684,7 +568,13 @@ struct ExerciseListView: View {
               let matchedExercises = pendingRoutineExercises(for: idStr) else { return }
         UserDefaults.standard.removeObject(forKey: pendingRoutineKey)
         exercises = matchedExercises
-        normalizeSupersets()
+        // Only a *saved* routine (not a preloaded, non-editable one) can receive mid-session edits.
+        if idStr.hasPrefix("saved:"), let uuid = UUID(uuidString: String(idStr.dropFirst("saved:".count))) {
+            loadedRoutineID = uuid
+        } else {
+            loadedRoutineID = nil
+        }
+        exercises.normalizeSupersets()
 #if canImport(WatchConnectivity)
         isSearchingForWatch = true
 #else
@@ -701,7 +591,7 @@ struct ExerciseListView: View {
         case .start(let exerciseList, _, _, _):
             // Watch is starting a workout — iPhone drives timers
             exercises = exerciseList
-            normalizeSupersets()
+            exercises.normalizeSupersets()
 #if canImport(WatchConnectivity)
             isSearchingForWatch = false
 #endif
@@ -713,6 +603,117 @@ struct ExerciseListView: View {
         }
     }
 #endif
+}
+
+/// The reorderable, swipeable list of exercises plus its "Add Exercise" row — shared by the main
+/// builder (`ExerciseListView.builderView`) and `RoutineEditorView`, so editing a saved routine
+/// gets the same superset/duplicate/delete affordances as building a fresh list from scratch.
+struct ExerciseListEditor: View {
+    @Binding var exercises: [Exercise]
+
+    var body: some View {
+        Group {
+            exerciseListSection
+            addExerciseSection
+        }
+    }
+
+    private var exerciseListSection: some View {
+        Section {
+            ForEach(Array(exercises.indices), id: \.self) { index in
+                let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
+                ExerciseEntryRow(exercise: $exercises[index], isSupersetAnchor: isAnchor)
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        if index > 0 {
+                            Button {
+                                exercises[index].isSupersetContinuation.toggle()
+                                exercises.normalizeSupersets()
+                            } label: {
+                                Label(
+                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset",
+                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
+                                )
+                            }
+                            .tint(.purple)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            exercises.remove(at: index)
+                            exercises.normalizeSupersets()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        Button {
+                            var copy = exercises[index]
+                            copy.id = UUID()
+                            exercises.insert(copy, at: index + 1)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                        .tint(.blue)
+                    }
+                    .contextMenu {
+                        Button {
+                            var copy = exercises[index]
+                            copy.id = UUID()
+                            exercises.insert(copy, at: index + 1)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                        if index > 0 {
+                            Button {
+                                exercises[index].isSupersetContinuation.toggle()
+                                exercises.normalizeSupersets()
+                            } label: {
+                                Label(
+                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset with Previous",
+                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
+                                )
+                            }
+                        }
+                    }
+            }
+            .onMove { (indices: IndexSet, newOffset: Int) in
+                exercises.move(fromOffsets: indices, toOffset: newOffset)
+                exercises.normalizeSupersets()
+            }
+            .onDelete { (indexSet: IndexSet) in
+                exercises.remove(atOffsets: indexSet)
+                exercises.normalizeSupersets()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addExerciseSection: some View {
+        Section {
+            Button(action: {
+                exercises.append(Exercise())
+            }) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                    Text("Add Exercise")
+                }
+                .font(.headline)
+                .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+// Helper row to reduce type-checker load
+private struct ExerciseEntryRow: View {
+    @Binding var exercise: Exercise
+    var isSupersetAnchor: Bool = false
+
+    var body: some View {
+        ExerciseEntryView(exercise: $exercise, isSupersetAnchor: isSupersetAnchor)
+#if os(macOS)
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+#endif
+    }
 }
 
 struct ExerciseEntryView: View {
@@ -2912,6 +2913,7 @@ struct RoutineManagerSheet: View {
     let onSaved: ([Routine]) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var editingRoutine: Routine?
 
     private var pplRoutines: [PreloadedRoutine] {
         PreloadedRoutines.all.filter { $0.seriesName == "Perfect PPL Split" }
@@ -2965,6 +2967,19 @@ struct RoutineManagerSheet: View {
                                 Button("Load") { onLoadSaved(routine) }
                                     .buttonStyle(.bordered)
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture { editingRoutine = routine }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button { editingRoutine = routine } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .tint(.blue)
+                            }
+                            .contextMenu {
+                                Button { editingRoutine = routine } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                            }
                         }
                         .onDelete { indexSet in
                             savedRoutines.remove(atOffsets: indexSet)
@@ -2993,6 +3008,83 @@ struct RoutineManagerSheet: View {
             // Without an explicit size, NavigationStack+List inside a macOS .sheet()
             // can fail to report a usable intrinsic size and the sheet collapses to
             // just its title bar (no visible rows). Force a reasonable window size.
+            .frame(minWidth: 420, idealWidth: 480, minHeight: 480, idealHeight: 560)
+#endif
+        }
+        .sheet(item: $editingRoutine) { routine in
+            RoutineEditorView(routine: routine) { updated in
+                if let index = savedRoutines.firstIndex(where: { $0.id == updated.id }) {
+                    savedRoutines[index] = updated
+                    onSaved(savedRoutines)
+                }
+            }
+        }
+    }
+}
+
+/// Renaming and editing the exercises of an existing saved routine — reuses `ExerciseListEditor`
+/// so this gets the same reorder/superset/duplicate affordances as the main builder. `routine.id`
+/// is preserved on save: Siri/`ExerciseTimerAppIntents` and `pendingRoutineStart` resolve saved
+/// routines by id, so a rename or exercise edit must not change it.
+struct RoutineEditorView: View {
+    let routine: Routine
+    let onSave: (Routine) -> Void
+
+    @State private var name: String
+    @State private var exercises: [Exercise]
+    @Environment(\.dismiss) private var dismiss
+
+    init(routine: Routine, onSave: @escaping (Routine) -> Void) {
+        self.routine = routine
+        self.onSave = onSave
+        _name = State(initialValue: routine.name)
+        _exercises = State(initialValue: routine.exercises)
+    }
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func save() {
+        exercises.normalizeSupersets()
+        onSave(Routine(id: routine.id, name: name.trimmingCharacters(in: .whitespaces), exercises: exercises))
+        dismiss()
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    TextField("Routine Name", text: $name)
+                }
+                ExerciseListEditor(exercises: $exercises)
+            }
+#if os(iOS)
+            .listStyle(.insetGrouped)
+#else
+            .listStyle(.inset)
+#endif
+            .navigationTitle("Edit Routine")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save", action: save).disabled(!canSave)
+                }
+            }
+#else
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save).disabled(!canSave)
+                }
+            }
+            // See RoutineManagerSheet for why macOS sheets need an explicit size.
             .frame(minWidth: 420, idealWidth: 480, minHeight: 480, idealHeight: 560)
 #endif
         }

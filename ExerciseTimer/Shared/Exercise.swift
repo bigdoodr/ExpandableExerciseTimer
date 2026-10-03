@@ -100,4 +100,21 @@ extension Array where Element == Exercise {
             return self[groupRange.upperBound].sets
         }
     }
+
+    /// Enforces the superset invariants after any edit to an exercise list:
+    /// - A superset marker on the first exercise means "linked to nothing" — not valid.
+    /// - An exercise immediately followed by a superset continuation has no rest of its own
+    ///   (rest lives on the chain's last exercise instead).
+    mutating func normalizeSupersets() {
+        guard indices.contains(0) else { return }
+        if self[0].isSupersetContinuation {
+            self[0].isSupersetContinuation = false
+        }
+        for index in indices {
+            let isAnchor = index + 1 < count && self[index + 1].isSupersetContinuation
+            if isAnchor && self[index].restDuration != 0 {
+                self[index].restDuration = 0
+            }
+        }
+    }
 }
