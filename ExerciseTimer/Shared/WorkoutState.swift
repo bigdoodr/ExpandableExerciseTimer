@@ -31,6 +31,9 @@ enum WorkoutCommand: Codable, Equatable {
     /// (e.g. realizing a set is too heavy/light and changing it for the next set/round).
     /// `weight` of `nil` clears it. iPhone/Mac remains the source of truth — the watch only mirrors this.
     case updateWeight(exerciseIndex: Int, weight: Double?, weightUnit: WeightUnit)
+    /// Sent from iPhone/Mac to watch when the target reps for an exercise are adjusted mid-session.
+    /// `reps` of `nil` clears it. iPhone/Mac remains the source of truth — the watch only mirrors this.
+    case updateTargetReps(exerciseIndex: Int, reps: Int?, repsMax: Int?)
 }
 
 /// A single HR zone's time-in-zone, computed by the device that owns the HealthKit workout session and

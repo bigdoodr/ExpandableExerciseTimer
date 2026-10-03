@@ -61,6 +61,11 @@ struct ExerciseListView: View {
 #endif
     @State private var showingResetConfirm = false
     @State private var savedRoutines: [Routine] = []
+    /// The saved routine `exercises` was loaded from, if any — mid-session reps/weight edits are
+    /// written back to this routine (by exercise id) in addition to the builder. `nil` after Reset,
+    /// import, or loading a preloaded (non-editable) routine, so those never get treated as edits
+    /// to a saved routine that merely happens to share exercise ids.
+    @State private var loadedRoutineID: Routine.ID?
     @State private var showRoutineSheet = false
     @State private var showSaveRoutineAlert = false
     @State private var newRoutineName = ""
@@ -144,7 +149,15 @@ struct ExerciseListView: View {
     @ViewBuilder
     private var workoutViewForPlatform: some View {
         #if os(iOS)
-        WorkoutView(
+        makeWorkoutView()
+        #else
+        makeWorkoutView()
+        #endif
+    }
+
+    #if os(iOS)
+    private func makeWorkoutView() -> WorkoutView {
+        var view = WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             keepScreenAwake: $keepScreenAwake,
@@ -152,15 +165,21 @@ struct ExerciseListView: View {
             healthKitEnabled: enableHealthKitTracking,
             activityType: selectedActivityType
         )
-        #else
-        WorkoutView(
+        view.onExerciseAdjusted = applyLiveAdjustment
+        return view
+    }
+    #else
+    private func makeWorkoutView() -> WorkoutView {
+        var view = WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             healthKitEnabled: false,
             activityType: .functionalStrengthTraining
         )
-        #endif
+        view.onExerciseAdjusted = applyLiveAdjustment
+        return view
     }
+    #endif
     
     private var builderView: some View {
         List {
@@ -207,7 +226,7 @@ struct ExerciseListView: View {
             if case .success = result { exportURL = nil }
         }
         .alert("Reset Exercises?", isPresented: $showingResetConfirm) {
-            Button("Reset", role: .destructive) { exercises = [Exercise()]; persistExercises() }
+            Button("Reset", role: .destructive) { exercises = [Exercise()]; loadedRoutineID = nil; persistExercises() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove all exercises in the builder.")
@@ -260,6 +279,13 @@ struct ExerciseListView: View {
                 currentExercises: exercises,
                 onLoad: { loadedExercises in
                     exercises = loadedExercises
+                    loadedRoutineID = nil
+                    normalizeSupersets()
+                    showRoutineSheet = false
+                },
+                onLoadSaved: { routine in
+                    exercises = routine.exercises
+                    loadedRoutineID = routine.id
                     normalizeSupersets()
                     showRoutineSheet = false
                 },
@@ -560,11 +586,33 @@ struct ExerciseListView: View {
             let data = try Data(contentsOf: url)
             let decoded = try JSONDecoder().decode([Exercise].self, from: data)
             exercises = decoded
+            loadedRoutineID = nil
             normalizeSupersets()
             persistExercises()
         } catch {
             print("Failed to import: \(error)")
         }
+    }
+
+    /// Writes a mid-session reps/weight edit (see `WorkoutView.onExerciseAdjusted`) back to the
+    /// builder's own list and, if the running workout was loaded from a saved routine, to that
+    /// routine too — matched by exercise id so edits land on the right exercise even if the
+    /// person reordered or added exercises in the builder after loading.
+    private func applyLiveAdjustment(_ adjusted: Exercise) {
+        if let index = exercises.firstIndex(where: { $0.id == adjusted.id }) {
+            exercises[index].weight = adjusted.weight
+            exercises[index].weightUnit = adjusted.weightUnit
+            exercises[index].targetReps = adjusted.targetReps
+            exercises[index].targetRepsMax = adjusted.targetRepsMax
+        }
+        guard let loadedRoutineID,
+              let routineIndex = savedRoutines.firstIndex(where: { $0.id == loadedRoutineID }),
+              let exerciseIndex = savedRoutines[routineIndex].exercises.firstIndex(where: { $0.id == adjusted.id }) else { return }
+        savedRoutines[routineIndex].exercises[exerciseIndex].weight = adjusted.weight
+        savedRoutines[routineIndex].exercises[exerciseIndex].weightUnit = adjusted.weightUnit
+        savedRoutines[routineIndex].exercises[exerciseIndex].targetReps = adjusted.targetReps
+        savedRoutines[routineIndex].exercises[exerciseIndex].targetRepsMax = adjusted.targetRepsMax
+        persistRoutines()
     }
     
     private func loadSavedExercises() {
@@ -1096,6 +1144,10 @@ struct WorkoutView: View {
     /// Mutable (not `let`) so weight can be adjusted for the next set/round mid-session — see `updateCurrentExerciseWeight`.
     @State private var exercises: [Exercise]
     @Binding var isActive: Bool
+    /// Notifies the builder of a mid-session weight/reps edit so it can be written back to the
+    /// builder's own list and the saved routine the workout was loaded from, if any — see
+    /// `ExerciseListView.applyLiveAdjustment`. Defaulted so none of the custom inits below need it.
+    var onExerciseAdjusted: (Exercise) -> Void = { _ in }
 #if canImport(UIKit)
     @Binding var keepScreenAwake: Bool
     @Binding var enableBackgroundAudio: Bool
@@ -1160,6 +1212,11 @@ struct WorkoutView: View {
     @State private var showWeightEditor = false
     @State private var weightEditText = ""
     @State private var weightEditUnit: WeightUnit = .lbs
+    /// Backs the mid-session "adjust target reps" sheet — see `beginEditingReps`/`updateCurrentExerciseReps`.
+    @State private var showRepsEditor = false
+    @State private var repsEditText = ""
+    @State private var repsEditIsRange = false
+    @State private var repsMaxEditText = ""
 
     /// Wall-clock timestamp of when the current phase (exercise or rest) began — used only to
     /// measure elapsed time for rep-based exercises, which have no countdown of their own.
@@ -1335,6 +1392,9 @@ struct WorkoutView: View {
         .sheet(isPresented: $showWeightEditor) {
             weightEditorSheet
         }
+        .sheet(isPresented: $showRepsEditor) {
+            repsEditorSheet
+        }
     }
 
     private var workoutContent: some View {
@@ -1360,11 +1420,31 @@ struct WorkoutView: View {
 
                     // Reps and weight share one line (e.g. "10 reps @ 50 LB") rather than stacking separately.
                     HStack(spacing: 6) {
-                        if !currentExercise.isTimeBased, let reps = currentExercise.targetReps {
-                            Text("\(reps) reps")
-                                .font(.title3)
-                                .bold()
+                        if !currentExercise.isTimeBased {
+                            if let reps = currentExercise.targetReps {
+                                // Tappable so target reps can be adjusted mid-session, same as weight below — see `updateCurrentExerciseReps`.
+                                Button {
+                                    beginEditingReps()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(repsRangeText(reps: reps, repsMax: currentExercise.targetRepsMax))
+                                            .font(.title3)
+                                            .bold()
+                                            .foregroundStyle(.purple)
+                                        Image(systemName: "pencil.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.purple.opacity(0.6))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Button("Set Target Reps") {
+                                    beginEditingReps()
+                                }
+                                .font(.subheadline)
+                                .buttonStyle(.plain)
                                 .foregroundStyle(.purple)
+                            }
                         }
 
                         if let weight = currentExercise.weight {
@@ -1433,11 +1513,7 @@ struct WorkoutView: View {
                             timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
                         }
 
-                        if let targetReps = currentExercise.targetReps {
-                            Text("Target: \(targetReps) reps")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                        } else {
+                        if currentExercise.targetReps == nil {
                             Text("Complete your reps")
                                 .font(.title3)
                                 .foregroundStyle(.secondary)
@@ -1993,8 +2069,8 @@ struct WorkoutView: View {
         case .wake:
             break
 
-        case .updateWeight:
-            // iPhone/Mac is the source of truth for weight changes — it never receives this from the watch.
+        case .updateWeight, .updateTargetReps:
+            // iPhone/Mac is the source of truth for weight/reps changes — it never receives these from the watch.
             break
         }
     }
@@ -2257,7 +2333,8 @@ struct WorkoutView: View {
     }
 
     /// Applies a mid-session weight change to the exercise currently in progress (e.g. a set turned
-    /// out too heavy/light) and mirrors it to the watch, which otherwise has no way to learn about it.
+    /// out too heavy/light), mirrors it to the watch (which otherwise has no way to learn about it),
+    /// and reports it back to the builder/saved routine via `onExerciseAdjusted`.
     func updateCurrentExerciseWeight(_ weight: Double?, unit: WeightUnit) {
         let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
         guard exercises.indices.contains(safeIndex) else { return }
@@ -2266,6 +2343,47 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendWorkoutCommand(.updateWeight(exerciseIndex: safeIndex, weight: weight, weightUnit: unit))
 #endif
+        onExerciseAdjusted(exercises[safeIndex])
+    }
+
+    /// Opens the mid-session target-reps-adjustment sheet, seeded with the current exercise's reps.
+    func beginEditingReps() {
+        if let reps = currentExercise.targetReps {
+            repsEditText = "\(reps)"
+            if let repsMax = currentExercise.targetRepsMax, repsMax != reps {
+                repsEditIsRange = true
+                repsMaxEditText = "\(repsMax)"
+            } else {
+                repsEditIsRange = false
+                repsMaxEditText = ""
+            }
+        } else {
+            repsEditText = ""
+            repsEditIsRange = false
+            repsMaxEditText = ""
+        }
+        showRepsEditor = true
+    }
+
+    /// Applies a mid-session target-reps change to the exercise currently in progress, mirrors it to
+    /// the watch, and reports it back to the builder/saved routine via `onExerciseAdjusted`.
+    func updateCurrentExerciseReps(_ reps: Int?, repsMax: Int?) {
+        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
+        guard exercises.indices.contains(safeIndex) else { return }
+        exercises[safeIndex].targetReps = reps
+        exercises[safeIndex].targetRepsMax = repsMax
+#if canImport(WatchConnectivity)
+        WatchConnectivityManager.shared.sendWorkoutCommand(.updateTargetReps(exerciseIndex: safeIndex, reps: reps, repsMax: repsMax))
+#endif
+        onExerciseAdjusted(exercises[safeIndex])
+    }
+
+    /// Formats target reps as "10 reps" or, when a range's upper bound differs, "8–10 reps".
+    func repsRangeText(reps: Int, repsMax: Int?) -> String {
+        if let repsMax, repsMax != reps {
+            return "\(reps)–\(repsMax) reps"
+        }
+        return "\(reps) reps"
     }
 
     private var weightEditorSheet: some View {
@@ -2305,6 +2423,45 @@ struct WorkoutView: View {
         }
     }
 
+    private var repsEditorSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("0", text: $repsEditText)
+#if os(iOS)
+                        .keyboardType(.numberPad)
+#endif
+                    Toggle("Range", isOn: $repsEditIsRange)
+                    if repsEditIsRange {
+                        TextField("Max reps", text: $repsMaxEditText)
+#if os(iOS)
+                            .keyboardType(.numberPad)
+#endif
+                    }
+                }
+            }
+            .navigationTitle("Adjust Target Reps")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showRepsEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let reps = Int(repsEditText).map { max(0, $0) }
+                        let repsMax = repsEditIsRange ? Int(repsMaxEditText).map { max(0, $0) } : nil
+                        // A max below the lower bound isn't a valid range — drop it rather than swap,
+                        // so "Save" never silently reinterprets what was typed.
+                        let validatedMax = (reps != nil && repsMax != nil && repsMax! >= reps!) ? repsMax : nil
+                        updateCurrentExerciseReps(reps, repsMax: validatedMax)
+                        showRepsEditor = false
+                    }
+                }
+            }
+        }
+    }
 
     func formatTime(_ time: TimeInterval) -> String {
         let hours = Int(time) / 3600
@@ -2736,6 +2893,9 @@ struct RoutineManagerSheet: View {
     @Binding var savedRoutines: [Routine]
     let currentExercises: [Exercise]
     let onLoad: ([Exercise]) -> Void
+    /// Loading a *saved* (as opposed to preloaded) routine also hands back its id, so the caller
+    /// can track which routine is live and write mid-session edits back to it.
+    let onLoadSaved: (Routine) -> Void
     let onSaved: ([Routine]) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -2789,7 +2949,7 @@ struct RoutineManagerSheet: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("Load") { onLoad(routine.exercises) }
+                                Button("Load") { onLoadSaved(routine) }
                                     .buttonStyle(.bordered)
                             }
                         }
