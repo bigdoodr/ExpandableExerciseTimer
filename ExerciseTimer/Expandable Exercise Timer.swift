@@ -39,7 +39,12 @@ struct ExerciseListView: View {
     @State private var isWorkoutActive = false
     @State private var showingImporter = false
     @State private var showingExporter = false
-    @State private var exportURL: URL?
+    /// Snapshotted when Export is tapped so the document handed to `.fileExporter` has a stable
+    /// identity for the lifetime of the picker — building it inline from `exercises` in `body`
+    /// recreated it on every re-render while the picker was open, which on iOS could prevent
+    /// "Replace" from targeting the right file when exporting to a name that already exists.
+    @State private var exportDocument = ExerciseDocument(exercises: [])
+    @State private var exportError: String?
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
@@ -222,8 +227,15 @@ struct ExerciseListView: View {
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
             importExercises(result)
         }
-        .fileExporter(isPresented: $showingExporter, document: ExerciseDocument(exercises: exercises), contentType: .json, defaultFilename: "exercises.json") { result in
-            if case .success = result { exportURL = nil }
+        .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: .json, defaultFilename: "exercises") { result in
+            if case .failure(let error) = result {
+                exportError = error.localizedDescription
+            }
+        }
+        .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "")
         }
         .alert("Reset Exercises?", isPresented: $showingResetConfirm) {
             Button("Reset", role: .destructive) { exercises = [Exercise()]; loadedRoutineID = nil; persistExercises() }
@@ -569,6 +581,7 @@ struct ExerciseListView: View {
     
     func exportExercises() {
         persistExercises()
+        exportDocument = ExerciseDocument(exercises: exercises)
         showingExporter = true
     }
     
@@ -3296,23 +3309,26 @@ struct WatchSearchView: View {
 
 struct ExerciseDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
-    
+    static var writableContentTypes: [UTType] { [.json] }
+
     var exercises: [Exercise]
-    
+
     init(exercises: [Exercise]) {
         self.exercises = exercises
     }
-    
+
     init(configuration: ReadConfiguration) throws {
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
         exercises = try JSONDecoder().decode([Exercise].self, from: data)
     }
-    
+
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         let data = try JSONEncoder().encode(exercises)
-        return FileWrapper(regularFileWithContents: data)
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        wrapper.preferredFilename = "exercises.json"
+        return wrapper
     }
 }
 
