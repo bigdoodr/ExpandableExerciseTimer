@@ -465,13 +465,15 @@ struct ExerciseListView: View {
             WatchConnectivityManager.shared.updateContext(
                 exercises: exercises,
                 healthKitEnabled: enableHealthKitTracking,
-                activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+                activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil,
+                hrZoneSettings: HRZoneStore.load()
             )
 #else
             WatchConnectivityManager.shared.updateContext(
                 exercises: exercises,
                 healthKitEnabled: false,
-                activityType: nil
+                activityType: nil,
+                hrZoneSettings: HRZoneStore.load()
             )
 #endif
             WatchConnectivityManager.shared.sendWorkoutCommand(.wake)
@@ -561,7 +563,8 @@ struct ExerciseListView: View {
         WatchConnectivityManager.shared.updateContext(
             exercises: exercises,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil,
+            hrZoneSettings: HRZoneStore.load()
         )
 #endif
     }

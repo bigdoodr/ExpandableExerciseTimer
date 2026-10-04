@@ -83,8 +83,11 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
     
-    /// Update application context with exercise list (reliable, persisted delivery)
-    func updateContext(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?, hrZoneSettings: HRZoneSettings = HRZoneStore.load()) {
+    /// Update application context with exercise list (reliable, persisted delivery).
+    /// `hrZoneSettings` isn't defaulted to `HRZoneStore.load()` because a default-argument
+    /// expression is evaluated in a nonisolated context, which can't reference this module's
+    /// (MainActor-isolated by default) declarations — callers pass it explicitly instead.
+    func updateContext(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?, hrZoneSettings: HRZoneSettings) {
         guard let session, session.activationState == .activated else { return }
         guard let exerciseData = try? JSONEncoder().encode(exercises) else { return }
 
