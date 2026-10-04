@@ -223,27 +223,28 @@ struct ExerciseListView: View {
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
             #endif
             // Primary actions group
+            // Titled (not icon-only) so each item can still show something meaningful in an
+            // overflow menu or a vertically-presented toolbar (e.g. iPhone Duo's outer display).
             ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: { showRoutineSheet = true }) { Image(systemName: "folder") }
-                    .accessibilityLabel("Routines")
-                Button(action: { showingImporter = true }) { Image(systemName: "square.and.arrow.down") }
-                    .accessibilityLabel("Import")
-                Button(action: exportExercises) { Image(systemName: "square.and.arrow.up") }
-                    .accessibilityLabel("Export")
-                Button(action: { showingResetConfirm = true }) { Image(systemName: "arrow.counterclockwise") }
-                    .accessibilityLabel("Reset")
+                Button("Routines", systemImage: "folder") { showRoutineSheet = true }
+                Button("Import", systemImage: "square.and.arrow.down") { showingImporter = true }
+                Button("Export", systemImage: "square.and.arrow.up", action: exportExercises)
+                Button("Reset", systemImage: "arrow.counterclockwise") { showingResetConfirm = true }
                 Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .overlay(alignment: .topTrailing) {
-                            if ageMissingBadgeVisible {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.yellow)
-                                    .offset(x: 8, y: -6)
+                    Label {
+                        Text(ageMissingBadgeVisible ? "Settings, age missing" : "Settings")
+                    } icon: {
+                        Image(systemName: "gearshape")
+                            .overlay(alignment: .topTrailing) {
+                                if ageMissingBadgeVisible {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(.yellow)
+                                        .offset(x: 8, y: -6)
+                                }
                             }
-                        }
+                    }
                 }
-                .accessibilityLabel(ageMissingBadgeVisible ? "Settings, age missing" : "Settings")
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
@@ -3023,8 +3024,17 @@ struct RoutineManagerSheet: View {
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                // Pinned so this prominent action stays reachable even in a vertically-presented
+                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
+                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
+                if #available(iOS 27.0, *) {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     EditButton()
@@ -3099,11 +3109,20 @@ struct RoutineEditorView: View {
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save", action: save).disabled(!canSave)
+                // Pinned so this prominent action stays reachable even in a vertically-presented
+                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
+                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
+                if #available(iOS 27.0, *) {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button("Save", action: save).disabled(!canSave)
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Save", action: save).disabled(!canSave)
+                    }
                 }
             }
 #else
@@ -3364,7 +3383,7 @@ struct WatchSearchView: View {
         .navigationTitle("Starting Workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { isPresented = false }
             }
         }

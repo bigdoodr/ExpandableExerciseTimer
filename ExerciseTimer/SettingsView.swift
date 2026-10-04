@@ -68,8 +68,17 @@ struct SettingsView: View {
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                // Pinned so this prominent action stays reachable even in a vertically-presented
+                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
+                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
+                if #available(iOS 27.0, *) {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
                 }
             }
 #else
