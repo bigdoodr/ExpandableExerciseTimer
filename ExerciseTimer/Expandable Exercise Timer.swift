@@ -58,12 +58,25 @@ struct ExerciseListView: View {
 #if os(iOS)
     @State private var enableHealthKitTracking = false
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
+#if canImport(HealthKit)
+    /// Drives the missing-age warning badge on the Settings gear icon — see `fetchMaxHeartRate()`.
+    @ObservedObject private var healthKitManagerForBadge = HealthKitWorkoutManager.shared
+#endif
     /// True once the user has explicitly touched the HealthKit toggle this session — used to
     /// decide whether to prompt before starting, so a forgotten toggle doesn't silently track
     /// (or silently skip tracking) a workout. Resets each launch by design.
     @State private var healthKitToggleTouched = false
     @State private var showHealthKitStartConfirm = false
 #endif
+    /// True when HealthKit is available but age couldn't be read from it — always false on
+    /// platforms/configurations without HealthKit (e.g. macOS), where there's nothing to warn about.
+    private var ageMissingBadgeVisible: Bool {
+#if os(iOS) && canImport(HealthKit)
+        HKHealthStore.isHealthDataAvailable() && healthKitManagerForBadge.age == nil
+#else
+        false
+#endif
+    }
     @State private var showingResetConfirm = false
     @State private var savedRoutines: [Routine] = []
     /// The saved routine `exercises` was loaded from, if any — mid-session reps/weight edits are
@@ -219,8 +232,18 @@ struct ExerciseListView: View {
                     .accessibilityLabel("Export")
                 Button(action: { showingResetConfirm = true }) { Image(systemName: "arrow.counterclockwise") }
                     .accessibilityLabel("Reset")
-                Button(action: { showSettings = true }) { Image(systemName: "gearshape") }
-                    .accessibilityLabel("Settings")
+                Button(action: { showSettings = true }) {
+                    Image(systemName: "gearshape")
+                        .overlay(alignment: .topTrailing) {
+                            if ageMissingBadgeVisible {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.yellow)
+                                    .offset(x: 8, y: -6)
+                            }
+                        }
+                }
+                .accessibilityLabel(ageMissingBadgeVisible ? "Settings, age missing" : "Settings")
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
@@ -249,6 +272,9 @@ struct ExerciseListView: View {
             loadSavedRoutines()
             checkPendingRoutine()
             presentOnboardingIfNeeded()
+#if os(iOS) && canImport(HealthKit)
+            HealthKitWorkoutManager.shared.fetchMaxHeartRate()
+#endif
         }
         .onChange(of: exercises) { _, _ in
             persistExercises()
@@ -280,6 +306,10 @@ struct ExerciseListView: View {
 #if os(iOS) && canImport(HealthKit)
                 if enableHealthKitTracking {
                     Task { await HealthKitWorkoutManager.shared.requestAuthorization() }
+                } else {
+                    // Doesn't prompt — only reflects whatever authorization already exists, so the
+                    // Settings badge stays accurate even when HealthKit tracking is off right now.
+                    HealthKitWorkoutManager.shared.fetchMaxHeartRate()
                 }
 #endif
             }
@@ -319,10 +349,11 @@ struct ExerciseListView: View {
             SettingsView(
                 keepScreenAwake: $keepScreenAwake,
                 enableBackgroundAudio: $enableBackgroundAudio,
-                requestOnboarding: $requestOnboardingFromSettings
+                requestOnboarding: $requestOnboardingFromSettings,
+                onZoneSettingsChanged: persistExercises
             )
 #else
-            SettingsView(requestOnboarding: $requestOnboardingFromSettings)
+            SettingsView(requestOnboarding: $requestOnboardingFromSettings, onZoneSettingsChanged: persistExercises)
 #endif
         }
         .alert("Save as Routine", isPresented: $showSaveRoutineAlert) {

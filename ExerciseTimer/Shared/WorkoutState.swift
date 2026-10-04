@@ -51,6 +51,7 @@ enum WCContextKey {
     static let workoutCommand = "workoutCommand"
     static let healthKitEnabled = "healthKitEnabled"
     static let activityType = "activityType"
+    static let hrZoneSettings = "hrZoneSettings"
 }
 
 /// Supported HealthKit workout activity types for the picker

@@ -15,7 +15,11 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     @Published var isAuthorized = false
     /// Estimated max heart rate derived from user's date of birth (220 − age).
     /// Falls back to 185 BPM if DOB is unavailable. Used as fallback zone boundary seed.
-    @Published var maxHeartRate: Double = 185.0
+    @Published var maxHeartRate: Double = HRZoneCalculator.defaultMaxHR
+    /// Age computed from HealthKit's date of birth. `nil` whenever it can't be read — permission
+    /// denied, not yet granted, or no birthday set in Health — which looks identical from this
+    /// API, so the Settings UI words it as "not available" rather than guessing which case it is.
+    @Published var age: Int? = nil
     /// Most recent resting heart rate sample, used to seed an extra low "resting" zone below the
     /// standard 50%-of-max boundary. `nil` if unavailable (permission denied, no data yet, etc.),
     /// in which case the fallback zone config falls back to the standard 5 zones with no resting tier.
@@ -87,15 +91,15 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     func fetchMaxHeartRate() {
         do {
             let dob = try healthStore.dateOfBirthComponents()
-            let currentYear = Calendar.current.component(.year, from: Date())
-            if let birthYear = dob.year {
-                let age = currentYear - birthYear
-                if age > 10 && age < 100 {
-                    maxHeartRate = Double(220 - age)
-                }
+            if let computedAge = HRZoneCalculator.age(from: dob), computedAge > 10, computedAge < 100 {
+                age = computedAge
+                maxHeartRate = HRZoneCalculator.maxHR(age: computedAge)
+            } else {
+                age = nil
             }
         } catch {
             // Keep default if DOB is unavailable or not granted
+            age = nil
         }
     }
 
@@ -166,28 +170,10 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             builder.delegate = self
             self.liveWorkoutBuilder = builder
 
-            // Use the person's preferred HR zone config from Health Settings automatically.
-            // Only set a custom fallback (5-zone, 220-age boundaries) if no preferred config exists.
             // Guarded: zoneConfiguration(for:), setCustomZoneConfiguration, and
             // HKWorkoutZoneConfiguration are all new in watchOS 27.
             if #available(watchOS 27.0, *) {
-                let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
-                if (try? await builder.zoneConfiguration(for: hrType)) == nil {
-                    let bpm = HKUnit.count().unitDivided(by: .minute())
-                    let maxHR = maxHeartRate
-                    var boundaryValues = [0.50, 0.60, 0.70, 0.85].map { maxHR * $0 }
-                    // Prepend a resting-HR boundary below the standard 50%-of-max cutoff when we
-                    // have a real reading for this person — splits the old catch-all zone 1 into a
-                    // distinct resting tier plus the standard Recovery zone (see recap zone list).
-                    if let restingHR = restingHeartRate, restingHR > 0, restingHR < boundaryValues[0] {
-                        boundaryValues.insert(restingHR, at: 0)
-                    }
-                    let boundaries = boundaryValues.map { HKQuantity(unit: bpm, doubleValue: $0) }
-                    try? await builder.setCustomZoneConfiguration(
-                        HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
-                        for: hrType
-                    )
-                }
+                await applyZoneConfiguration(to: builder)
             }
 
             let startDate = Date()
@@ -210,6 +196,9 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
                 builder.delegate = self
                 self.workoutSession = session
                 self.liveWorkoutBuilder = builder
+                if #available(iOS 27.0, *) {
+                    await applyZoneConfiguration(to: builder)
+                }
                 let startDate = Date()
                 session.startActivity(with: startDate)
                 try await builder.beginCollection(at: startDate)
@@ -226,6 +215,43 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
             workoutSession = nil
             liveWorkoutBuilder = nil
         }
+    }
+
+    /// Sets the heart-rate zone boundaries this workout should use, in priority order: this app's
+    /// own manual zones (set in Settings), then whatever the person already has in Health
+    /// Settings (left alone by doing nothing), then a 220−age (or default-185) fallback — only
+    /// reached when neither of the first two applies. A resting-HR boundary is prepended to the
+    /// fallback when available, splitting the lowest tier into a distinct resting zone.
+    @available(iOS 27.0, watchOS 27.0, *)
+    private func applyZoneConfiguration(to builder: HKLiveWorkoutBuilder) async {
+        let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+
+        if let manualBounds = HRZoneStore.load().upperBounds, !manualBounds.isEmpty {
+            let boundaries = manualBounds.map { HKQuantity(unit: bpm, doubleValue: $0) }
+            try? await builder.setCustomZoneConfiguration(
+                HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
+                for: hrType
+            )
+            return
+        }
+
+        // Leave the person's own Health Settings zones in place if they have any.
+        guard (try? await builder.zoneConfiguration(for: hrType)) == nil else { return }
+
+        let maxHR = maxHeartRate
+        var boundaryValues = HRZoneCalculator.boundaries(maxHR: maxHR)
+        // Prepend a resting-HR boundary below the standard 50%-of-max cutoff when we
+        // have a real reading for this person — splits the old catch-all zone 1 into a
+        // distinct resting tier plus the standard Recovery zone (see recap zone list).
+        if let restingHR = restingHeartRate, restingHR > 0, restingHR < boundaryValues[0] {
+            boundaryValues.insert(restingHR, at: 0)
+        }
+        let boundaries = boundaryValues.map { HKQuantity(unit: bpm, doubleValue: $0) }
+        try? await builder.setCustomZoneConfiguration(
+            HKWorkoutZoneConfiguration(quantityType: hrType, zoneBoundaries: boundaries),
+            for: hrType
+        )
     }
 
     private func cleanupSession() async {
