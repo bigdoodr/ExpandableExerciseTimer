@@ -95,6 +95,13 @@ final class WatchWorkoutEngine: ObservableObject {
         exercises[exerciseIndex].weightUnit = weightUnit
     }
 
+    /// Mirrors a mid-session target-reps change made on iPhone/Mac — see `WorkoutCommand.updateTargetReps`.
+    func applyTargetRepsUpdate(exerciseIndex: Int, reps: Int?, repsMax: Int?) {
+        guard exercises.indices.contains(exerciseIndex) else { return }
+        exercises[exerciseIndex].targetReps = reps
+        exercises[exerciseIndex].targetRepsMax = repsMax
+    }
+
     // MARK: - Up Next Text
     
     var upNextText: String {

@@ -39,7 +39,12 @@ struct ExerciseListView: View {
     @State private var isWorkoutActive = false
     @State private var showingImporter = false
     @State private var showingExporter = false
-    @State private var exportURL: URL?
+    /// Snapshotted when Export is tapped so the document handed to `.fileExporter` has a stable
+    /// identity for the lifetime of the picker — building it inline from `exercises` in `body`
+    /// recreated it on every re-render while the picker was open, which on iOS could prevent
+    /// "Replace" from targeting the right file when exporting to a name that already exists.
+    @State private var exportDocument = ExerciseDocument(exercises: [])
+    @State private var exportError: String?
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
@@ -53,14 +58,32 @@ struct ExerciseListView: View {
 #if os(iOS)
     @State private var enableHealthKitTracking = false
     @State private var selectedActivityType: WorkoutActivityOption = .functionalStrengthTraining
+#if canImport(HealthKit)
+    /// Drives the missing-age warning badge on the Settings gear icon — see `fetchMaxHeartRate()`.
+    @ObservedObject private var healthKitManagerForBadge = HealthKitWorkoutManager.shared
+#endif
     /// True once the user has explicitly touched the HealthKit toggle this session — used to
     /// decide whether to prompt before starting, so a forgotten toggle doesn't silently track
     /// (or silently skip tracking) a workout. Resets each launch by design.
     @State private var healthKitToggleTouched = false
     @State private var showHealthKitStartConfirm = false
 #endif
+    /// True when HealthKit is available but age couldn't be read from it — always false on
+    /// platforms/configurations without HealthKit (e.g. macOS), where there's nothing to warn about.
+    private var ageMissingBadgeVisible: Bool {
+#if os(iOS) && canImport(HealthKit)
+        HKHealthStore.isHealthDataAvailable() && healthKitManagerForBadge.age == nil
+#else
+        false
+#endif
+    }
     @State private var showingResetConfirm = false
     @State private var savedRoutines: [Routine] = []
+    /// The saved routine `exercises` was loaded from, if any — mid-session reps/weight edits are
+    /// written back to this routine (by exercise id) in addition to the builder. `nil` after Reset,
+    /// import, or loading a preloaded (non-editable) routine, so those never get treated as edits
+    /// to a saved routine that merely happens to share exercise ids.
+    @State private var loadedRoutineID: Routine.ID?
     @State private var showRoutineSheet = false
     @State private var showSaveRoutineAlert = false
     @State private var newRoutineName = ""
@@ -144,7 +167,15 @@ struct ExerciseListView: View {
     @ViewBuilder
     private var workoutViewForPlatform: some View {
         #if os(iOS)
-        WorkoutView(
+        makeWorkoutView()
+        #else
+        makeWorkoutView()
+        #endif
+    }
+
+    #if os(iOS)
+    private func makeWorkoutView() -> WorkoutView {
+        var view = WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             keepScreenAwake: $keepScreenAwake,
@@ -152,20 +183,25 @@ struct ExerciseListView: View {
             healthKitEnabled: enableHealthKitTracking,
             activityType: selectedActivityType
         )
-        #else
-        WorkoutView(
+        view.onExerciseAdjusted = applyLiveAdjustment
+        return view
+    }
+    #else
+    private func makeWorkoutView() -> WorkoutView {
+        var view = WorkoutView(
             exercises: exercises,
             isActive: $isWorkoutActive,
             healthKitEnabled: false,
             activityType: .functionalStrengthTraining
         )
-        #endif
+        view.onExerciseAdjusted = applyLiveAdjustment
+        return view
     }
+    #endif
     
     private var builderView: some View {
         List {
-            exerciseListSection
-            addExerciseSection
+            ExerciseListEditor(exercises: $exercises)
 #if os(iOS)
             healthKitSection
 #endif
@@ -187,27 +223,45 @@ struct ExerciseListView: View {
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
             #endif
             // Primary actions group
+            // Titled (not icon-only) so each item can still show something meaningful in an
+            // overflow menu or a vertically-presented toolbar (e.g. iPhone Duo's outer display).
             ToolbarItemGroup(placement: .primaryAction) {
-                Button(action: { showRoutineSheet = true }) { Image(systemName: "folder") }
-                    .accessibilityLabel("Routines")
-                Button(action: { showingImporter = true }) { Image(systemName: "square.and.arrow.down") }
-                    .accessibilityLabel("Import")
-                Button(action: exportExercises) { Image(systemName: "square.and.arrow.up") }
-                    .accessibilityLabel("Export")
-                Button(action: { showingResetConfirm = true }) { Image(systemName: "arrow.counterclockwise") }
-                    .accessibilityLabel("Reset")
-                Button(action: { showSettings = true }) { Image(systemName: "gearshape") }
-                    .accessibilityLabel("Settings")
+                Button("Routines", systemImage: "folder") { showRoutineSheet = true }
+                Button("Import", systemImage: "square.and.arrow.down") { showingImporter = true }
+                Button("Export", systemImage: "square.and.arrow.up", action: exportExercises)
+                Button("Reset", systemImage: "arrow.counterclockwise") { showingResetConfirm = true }
+                Button(action: { showSettings = true }) {
+                    Label {
+                        Text(ageMissingBadgeVisible ? "Settings, age missing" : "Settings")
+                    } icon: {
+                        Image(systemName: "gearshape")
+                            .overlay(alignment: .topTrailing) {
+                                if ageMissingBadgeVisible {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(.yellow)
+                                        .offset(x: 8, y: -6)
+                                }
+                            }
+                    }
+                }
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
             importExercises(result)
         }
-        .fileExporter(isPresented: $showingExporter, document: ExerciseDocument(exercises: exercises), contentType: .json, defaultFilename: "exercises.json") { result in
-            if case .success = result { exportURL = nil }
+        .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: .json, defaultFilename: "exercises") { result in
+            if case .failure(let error) = result {
+                exportError = error.localizedDescription
+            }
+        }
+        .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "")
         }
         .alert("Reset Exercises?", isPresented: $showingResetConfirm) {
-            Button("Reset", role: .destructive) { exercises = [Exercise()]; persistExercises() }
+            Button("Reset", role: .destructive) { exercises = [Exercise()]; loadedRoutineID = nil; persistExercises() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove all exercises in the builder.")
@@ -219,6 +273,9 @@ struct ExerciseListView: View {
             loadSavedRoutines()
             checkPendingRoutine()
             presentOnboardingIfNeeded()
+#if os(iOS) && canImport(HealthKit)
+            HealthKitWorkoutManager.shared.fetchMaxHeartRate()
+#endif
         }
         .onChange(of: exercises) { _, _ in
             persistExercises()
@@ -250,6 +307,10 @@ struct ExerciseListView: View {
 #if os(iOS) && canImport(HealthKit)
                 if enableHealthKitTracking {
                     Task { await HealthKitWorkoutManager.shared.requestAuthorization() }
+                } else {
+                    // Doesn't prompt — only reflects whatever authorization already exists, so the
+                    // Settings badge stays accurate even when HealthKit tracking is off right now.
+                    HealthKitWorkoutManager.shared.fetchMaxHeartRate()
                 }
 #endif
             }
@@ -260,7 +321,14 @@ struct ExerciseListView: View {
                 currentExercises: exercises,
                 onLoad: { loadedExercises in
                     exercises = loadedExercises
-                    normalizeSupersets()
+                    loadedRoutineID = nil
+                    exercises.normalizeSupersets()
+                    showRoutineSheet = false
+                },
+                onLoadSaved: { routine in
+                    exercises = routine.exercises
+                    loadedRoutineID = routine.id
+                    exercises.normalizeSupersets()
                     showRoutineSheet = false
                 },
                 onSaved: { updated in
@@ -282,10 +350,11 @@ struct ExerciseListView: View {
             SettingsView(
                 keepScreenAwake: $keepScreenAwake,
                 enableBackgroundAudio: $enableBackgroundAudio,
-                requestOnboarding: $requestOnboardingFromSettings
+                requestOnboarding: $requestOnboardingFromSettings,
+                onZoneSettingsChanged: persistExercises
             )
 #else
-            SettingsView(requestOnboarding: $requestOnboardingFromSettings)
+            SettingsView(requestOnboarding: $requestOnboardingFromSettings, onZoneSettingsChanged: persistExercises)
 #endif
         }
         .alert("Save as Routine", isPresented: $showSaveRoutineAlert) {
@@ -318,108 +387,6 @@ struct ExerciseListView: View {
             markOnboardingSeen()
         }) {
             OnboardingView(mode: onboardingMode)
-        }
-    }
-    
-    @ViewBuilder
-    private var exerciseListSection: some View {
-        Section {
-            ForEach(Array(exercises.indices), id: \.self) { index in
-                let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
-                ExerciseEntryRow(exercise: $exercises[index], isSupersetAnchor: isAnchor)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        if index > 0 {
-                            Button {
-                                exercises[index].isSupersetContinuation.toggle()
-                                normalizeSupersets()
-                            } label: {
-                                Label(
-                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset",
-                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
-                                )
-                            }
-                            .tint(.purple)
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            exercises.remove(at: index)
-                            normalizeSupersets()
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        Button {
-                            var copy = exercises[index]
-                            copy.id = UUID()
-                            exercises.insert(copy, at: index + 1)
-                        } label: {
-                            Label("Duplicate", systemImage: "plus.square.on.square")
-                        }
-                        .tint(.blue)
-                    }
-                    .contextMenu {
-                        Button {
-                            var copy = exercises[index]
-                            copy.id = UUID()
-                            exercises.insert(copy, at: index + 1)
-                        } label: {
-                            Label("Duplicate", systemImage: "plus.square.on.square")
-                        }
-                        if index > 0 {
-                            Button {
-                                exercises[index].isSupersetContinuation.toggle()
-                                normalizeSupersets()
-                            } label: {
-                                Label(
-                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset with Previous",
-                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
-                                )
-                            }
-                        }
-                    }
-            }
-            .onMove { (indices: IndexSet, newOffset: Int) in
-                exercises.move(fromOffsets: indices, toOffset: newOffset)
-                normalizeSupersets()
-            }
-            .onDelete { (indexSet: IndexSet) in
-                exercises.remove(atOffsets: indexSet)
-                normalizeSupersets()
-            }
-        }
-    }
-
-    /// Enforces the superset invariants after any edit to the exercise list:
-    /// - A superset marker on the first exercise means "linked to nothing" — not valid.
-    /// - An exercise immediately followed by a superset continuation has no rest of its own
-    ///   (rest lives on the chain's last exercise instead).
-    private func normalizeSupersets() {
-        guard exercises.indices.contains(0) else { return }
-        if exercises[0].isSupersetContinuation {
-            exercises[0].isSupersetContinuation = false
-        }
-        for index in exercises.indices {
-            let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
-            if isAnchor && exercises[index].restDuration != 0 {
-                exercises[index].restDuration = 0
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var addExerciseSection: some View {
-        Section {
-            Button(action: {
-                exercises.append(Exercise())
-            }) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text("Add Exercise")
-                }
-                .font(.headline)
-                .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
         }
     }
 
@@ -498,13 +465,15 @@ struct ExerciseListView: View {
             WatchConnectivityManager.shared.updateContext(
                 exercises: exercises,
                 healthKitEnabled: enableHealthKitTracking,
-                activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+                activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil,
+                hrZoneSettings: HRZoneStore.load()
             )
 #else
             WatchConnectivityManager.shared.updateContext(
                 exercises: exercises,
                 healthKitEnabled: false,
-                activityType: nil
+                activityType: nil,
+                hrZoneSettings: HRZoneStore.load()
             )
 #endif
             WatchConnectivityManager.shared.sendWorkoutCommand(.wake)
@@ -527,22 +496,10 @@ struct ExerciseListView: View {
 #endif
         isWorkoutActive = true
     }
-    
-    // Helper row to reduce type-checker load
-    private struct ExerciseEntryRow: View {
-        @Binding var exercise: Exercise
-        var isSupersetAnchor: Bool = false
 
-        var body: some View {
-            ExerciseEntryView(exercise: $exercise, isSupersetAnchor: isSupersetAnchor)
-#if os(macOS)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-#endif
-        }
-    }
-    
     func exportExercises() {
         persistExercises()
+        exportDocument = ExerciseDocument(exercises: exercises)
         showingExporter = true
     }
     
@@ -560,18 +517,40 @@ struct ExerciseListView: View {
             let data = try Data(contentsOf: url)
             let decoded = try JSONDecoder().decode([Exercise].self, from: data)
             exercises = decoded
-            normalizeSupersets()
+            loadedRoutineID = nil
+            exercises.normalizeSupersets()
             persistExercises()
         } catch {
             print("Failed to import: \(error)")
         }
+    }
+
+    /// Writes a mid-session reps/weight edit (see `WorkoutView.onExerciseAdjusted`) back to the
+    /// builder's own list and, if the running workout was loaded from a saved routine, to that
+    /// routine too — matched by exercise id so edits land on the right exercise even if the
+    /// person reordered or added exercises in the builder after loading.
+    private func applyLiveAdjustment(_ adjusted: Exercise) {
+        if let index = exercises.firstIndex(where: { $0.id == adjusted.id }) {
+            exercises[index].weight = adjusted.weight
+            exercises[index].weightUnit = adjusted.weightUnit
+            exercises[index].targetReps = adjusted.targetReps
+            exercises[index].targetRepsMax = adjusted.targetRepsMax
+        }
+        guard let loadedRoutineID,
+              let routineIndex = savedRoutines.firstIndex(where: { $0.id == loadedRoutineID }),
+              let exerciseIndex = savedRoutines[routineIndex].exercises.firstIndex(where: { $0.id == adjusted.id }) else { return }
+        savedRoutines[routineIndex].exercises[exerciseIndex].weight = adjusted.weight
+        savedRoutines[routineIndex].exercises[exerciseIndex].weightUnit = adjusted.weightUnit
+        savedRoutines[routineIndex].exercises[exerciseIndex].targetReps = adjusted.targetReps
+        savedRoutines[routineIndex].exercises[exerciseIndex].targetRepsMax = adjusted.targetRepsMax
+        persistRoutines()
     }
     
     private func loadSavedExercises() {
         if let data = UserDefaults.standard.data(forKey: exercisesDefaultsKey) {
             if let decoded = try? JSONDecoder().decode([Exercise].self, from: data) {
                 exercises = decoded
-                normalizeSupersets()
+                exercises.normalizeSupersets()
             }
         }
     }
@@ -584,7 +563,8 @@ struct ExerciseListView: View {
         WatchConnectivityManager.shared.updateContext(
             exercises: exercises,
             healthKitEnabled: enableHealthKitTracking,
-            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil
+            activityType: enableHealthKitTracking ? selectedActivityType.rawValue : nil,
+            hrZoneSettings: HRZoneStore.load()
         )
 #endif
     }
@@ -623,7 +603,13 @@ struct ExerciseListView: View {
               let matchedExercises = pendingRoutineExercises(for: idStr) else { return }
         UserDefaults.standard.removeObject(forKey: pendingRoutineKey)
         exercises = matchedExercises
-        normalizeSupersets()
+        // Only a *saved* routine (not a preloaded, non-editable one) can receive mid-session edits.
+        if idStr.hasPrefix("saved:"), let uuid = UUID(uuidString: String(idStr.dropFirst("saved:".count))) {
+            loadedRoutineID = uuid
+        } else {
+            loadedRoutineID = nil
+        }
+        exercises.normalizeSupersets()
 #if canImport(WatchConnectivity)
         isSearchingForWatch = true
 #else
@@ -640,7 +626,7 @@ struct ExerciseListView: View {
         case .start(let exerciseList, _, _, _):
             // Watch is starting a workout — iPhone drives timers
             exercises = exerciseList
-            normalizeSupersets()
+            exercises.normalizeSupersets()
 #if canImport(WatchConnectivity)
             isSearchingForWatch = false
 #endif
@@ -652,6 +638,117 @@ struct ExerciseListView: View {
         }
     }
 #endif
+}
+
+/// The reorderable, swipeable list of exercises plus its "Add Exercise" row — shared by the main
+/// builder (`ExerciseListView.builderView`) and `RoutineEditorView`, so editing a saved routine
+/// gets the same superset/duplicate/delete affordances as building a fresh list from scratch.
+struct ExerciseListEditor: View {
+    @Binding var exercises: [Exercise]
+
+    var body: some View {
+        Group {
+            exerciseListSection
+            addExerciseSection
+        }
+    }
+
+    private var exerciseListSection: some View {
+        Section {
+            ForEach(Array(exercises.indices), id: \.self) { index in
+                let isAnchor = index + 1 < exercises.count && exercises[index + 1].isSupersetContinuation
+                ExerciseEntryRow(exercise: $exercises[index], isSupersetAnchor: isAnchor)
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        if index > 0 {
+                            Button {
+                                exercises[index].isSupersetContinuation.toggle()
+                                exercises.normalizeSupersets()
+                            } label: {
+                                Label(
+                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset",
+                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
+                                )
+                            }
+                            .tint(.purple)
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button(role: .destructive) {
+                            exercises.remove(at: index)
+                            exercises.normalizeSupersets()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        Button {
+                            var copy = exercises[index]
+                            copy.id = UUID()
+                            exercises.insert(copy, at: index + 1)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                        .tint(.blue)
+                    }
+                    .contextMenu {
+                        Button {
+                            var copy = exercises[index]
+                            copy.id = UUID()
+                            exercises.insert(copy, at: index + 1)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                        if index > 0 {
+                            Button {
+                                exercises[index].isSupersetContinuation.toggle()
+                                exercises.normalizeSupersets()
+                            } label: {
+                                Label(
+                                    exercises[index].isSupersetContinuation ? "Unlink Superset" : "Superset with Previous",
+                                    systemImage: exercises[index].isSupersetContinuation ? "link.badge.minus" : "link"
+                                )
+                            }
+                        }
+                    }
+            }
+            .onMove { (indices: IndexSet, newOffset: Int) in
+                exercises.move(fromOffsets: indices, toOffset: newOffset)
+                exercises.normalizeSupersets()
+            }
+            .onDelete { (indexSet: IndexSet) in
+                exercises.remove(atOffsets: indexSet)
+                exercises.normalizeSupersets()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addExerciseSection: some View {
+        Section {
+            Button(action: {
+                exercises.append(Exercise())
+            }) {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                    Text("Add Exercise")
+                }
+                .font(.headline)
+                .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+// Helper row to reduce type-checker load
+private struct ExerciseEntryRow: View {
+    @Binding var exercise: Exercise
+    var isSupersetAnchor: Bool = false
+
+    var body: some View {
+        ExerciseEntryView(exercise: $exercise, isSupersetAnchor: isSupersetAnchor)
+#if os(macOS)
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+#endif
+    }
 }
 
 struct ExerciseEntryView: View {
@@ -1096,6 +1193,10 @@ struct WorkoutView: View {
     /// Mutable (not `let`) so weight can be adjusted for the next set/round mid-session — see `updateCurrentExerciseWeight`.
     @State private var exercises: [Exercise]
     @Binding var isActive: Bool
+    /// Notifies the builder of a mid-session weight/reps edit so it can be written back to the
+    /// builder's own list and the saved routine the workout was loaded from, if any — see
+    /// `ExerciseListView.applyLiveAdjustment`. Defaulted so none of the custom inits below need it.
+    var onExerciseAdjusted: (Exercise) -> Void = { _ in }
 #if canImport(UIKit)
     @Binding var keepScreenAwake: Bool
     @Binding var enableBackgroundAudio: Bool
@@ -1160,6 +1261,11 @@ struct WorkoutView: View {
     @State private var showWeightEditor = false
     @State private var weightEditText = ""
     @State private var weightEditUnit: WeightUnit = .lbs
+    /// Backs the mid-session "adjust target reps" sheet — see `beginEditingReps`/`updateCurrentExerciseReps`.
+    @State private var showRepsEditor = false
+    @State private var repsEditText = ""
+    @State private var repsEditIsRange = false
+    @State private var repsMaxEditText = ""
 
     /// Wall-clock timestamp of when the current phase (exercise or rest) began — used only to
     /// measure elapsed time for rep-based exercises, which have no countdown of their own.
@@ -1335,6 +1441,9 @@ struct WorkoutView: View {
         .sheet(isPresented: $showWeightEditor) {
             weightEditorSheet
         }
+        .sheet(isPresented: $showRepsEditor) {
+            repsEditorSheet
+        }
     }
 
     private var workoutContent: some View {
@@ -1360,11 +1469,31 @@ struct WorkoutView: View {
 
                     // Reps and weight share one line (e.g. "10 reps @ 50 LB") rather than stacking separately.
                     HStack(spacing: 6) {
-                        if !currentExercise.isTimeBased, let reps = currentExercise.targetReps {
-                            Text("\(reps) reps")
-                                .font(.title3)
-                                .bold()
+                        if !currentExercise.isTimeBased {
+                            if let reps = currentExercise.targetReps {
+                                // Tappable so target reps can be adjusted mid-session, same as weight below — see `updateCurrentExerciseReps`.
+                                Button {
+                                    beginEditingReps()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text(repsRangeText(reps: reps, repsMax: currentExercise.targetRepsMax))
+                                            .font(.title3)
+                                            .bold()
+                                            .foregroundStyle(.purple)
+                                        Image(systemName: "pencil.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.purple.opacity(0.6))
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Button("Set Target Reps") {
+                                    beginEditingReps()
+                                }
+                                .font(.subheadline)
+                                .buttonStyle(.plain)
                                 .foregroundStyle(.purple)
+                            }
                         }
 
                         if let weight = currentExercise.weight {
@@ -1433,11 +1562,7 @@ struct WorkoutView: View {
                             timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
                         }
 
-                        if let targetReps = currentExercise.targetReps {
-                            Text("Target: \(targetReps) reps")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                        } else {
+                        if currentExercise.targetReps == nil {
                             Text("Complete your reps")
                                 .font(.title3)
                                 .foregroundStyle(.secondary)
@@ -1993,8 +2118,8 @@ struct WorkoutView: View {
         case .wake:
             break
 
-        case .updateWeight:
-            // iPhone/Mac is the source of truth for weight changes — it never receives this from the watch.
+        case .updateWeight, .updateTargetReps:
+            // iPhone/Mac is the source of truth for weight/reps changes — it never receives these from the watch.
             break
         }
     }
@@ -2257,7 +2382,8 @@ struct WorkoutView: View {
     }
 
     /// Applies a mid-session weight change to the exercise currently in progress (e.g. a set turned
-    /// out too heavy/light) and mirrors it to the watch, which otherwise has no way to learn about it.
+    /// out too heavy/light), mirrors it to the watch (which otherwise has no way to learn about it),
+    /// and reports it back to the builder/saved routine via `onExerciseAdjusted`.
     func updateCurrentExerciseWeight(_ weight: Double?, unit: WeightUnit) {
         let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
         guard exercises.indices.contains(safeIndex) else { return }
@@ -2266,6 +2392,47 @@ struct WorkoutView: View {
 #if canImport(WatchConnectivity)
         WatchConnectivityManager.shared.sendWorkoutCommand(.updateWeight(exerciseIndex: safeIndex, weight: weight, weightUnit: unit))
 #endif
+        onExerciseAdjusted(exercises[safeIndex])
+    }
+
+    /// Opens the mid-session target-reps-adjustment sheet, seeded with the current exercise's reps.
+    func beginEditingReps() {
+        if let reps = currentExercise.targetReps {
+            repsEditText = "\(reps)"
+            if let repsMax = currentExercise.targetRepsMax, repsMax != reps {
+                repsEditIsRange = true
+                repsMaxEditText = "\(repsMax)"
+            } else {
+                repsEditIsRange = false
+                repsMaxEditText = ""
+            }
+        } else {
+            repsEditText = ""
+            repsEditIsRange = false
+            repsMaxEditText = ""
+        }
+        showRepsEditor = true
+    }
+
+    /// Applies a mid-session target-reps change to the exercise currently in progress, mirrors it to
+    /// the watch, and reports it back to the builder/saved routine via `onExerciseAdjusted`.
+    func updateCurrentExerciseReps(_ reps: Int?, repsMax: Int?) {
+        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
+        guard exercises.indices.contains(safeIndex) else { return }
+        exercises[safeIndex].targetReps = reps
+        exercises[safeIndex].targetRepsMax = repsMax
+#if canImport(WatchConnectivity)
+        WatchConnectivityManager.shared.sendWorkoutCommand(.updateTargetReps(exerciseIndex: safeIndex, reps: reps, repsMax: repsMax))
+#endif
+        onExerciseAdjusted(exercises[safeIndex])
+    }
+
+    /// Formats target reps as "10 reps" or, when a range's upper bound differs, "8–10 reps".
+    func repsRangeText(reps: Int, repsMax: Int?) -> String {
+        if let repsMax, repsMax != reps {
+            return "\(reps)–\(repsMax) reps"
+        }
+        return "\(reps) reps"
     }
 
     private var weightEditorSheet: some View {
@@ -2305,6 +2472,45 @@ struct WorkoutView: View {
         }
     }
 
+    private var repsEditorSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("0", text: $repsEditText)
+#if os(iOS)
+                        .keyboardType(.numberPad)
+#endif
+                    Toggle("Range", isOn: $repsEditIsRange)
+                    if repsEditIsRange {
+                        TextField("Max reps", text: $repsMaxEditText)
+#if os(iOS)
+                            .keyboardType(.numberPad)
+#endif
+                    }
+                }
+            }
+            .navigationTitle("Adjust Target Reps")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showRepsEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let reps = Int(repsEditText).map { max(0, $0) }
+                        let repsMax = repsEditIsRange ? Int(repsMaxEditText).map { max(0, $0) } : nil
+                        // A max below the lower bound isn't a valid range — drop it rather than swap,
+                        // so "Save" never silently reinterprets what was typed.
+                        let validatedMax = (reps != nil && repsMax != nil && repsMax! >= reps!) ? repsMax : nil
+                        updateCurrentExerciseReps(reps, repsMax: validatedMax)
+                        showRepsEditor = false
+                    }
+                }
+            }
+        }
+    }
 
     func formatTime(_ time: TimeInterval) -> String {
         let hours = Int(time) / 3600
@@ -2736,9 +2942,13 @@ struct RoutineManagerSheet: View {
     @Binding var savedRoutines: [Routine]
     let currentExercises: [Exercise]
     let onLoad: ([Exercise]) -> Void
+    /// Loading a *saved* (as opposed to preloaded) routine also hands back its id, so the caller
+    /// can track which routine is live and write mid-session edits back to it.
+    let onLoadSaved: (Routine) -> Void
     let onSaved: ([Routine]) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var editingRoutine: Routine?
 
     private var pplRoutines: [PreloadedRoutine] {
         PreloadedRoutines.all.filter { $0.seriesName == "Perfect PPL Split" }
@@ -2789,8 +2999,21 @@ struct RoutineManagerSheet: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("Load") { onLoad(routine.exercises) }
+                                Button("Load") { onLoadSaved(routine) }
                                     .buttonStyle(.bordered)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { editingRoutine = routine }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button { editingRoutine = routine } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .tint(.blue)
+                            }
+                            .contextMenu {
+                                Button { editingRoutine = routine } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
                             }
                         }
                         .onDelete { indexSet in
@@ -2804,8 +3027,17 @@ struct RoutineManagerSheet: View {
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                // Pinned so this prominent action stays reachable even in a vertically-presented
+                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
+                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
+                if #available(iOS 27.0, *) {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     EditButton()
@@ -2820,6 +3052,92 @@ struct RoutineManagerSheet: View {
             // Without an explicit size, NavigationStack+List inside a macOS .sheet()
             // can fail to report a usable intrinsic size and the sheet collapses to
             // just its title bar (no visible rows). Force a reasonable window size.
+            .frame(minWidth: 420, idealWidth: 480, minHeight: 480, idealHeight: 560)
+#endif
+        }
+        .sheet(item: $editingRoutine) { routine in
+            RoutineEditorView(routine: routine) { updated in
+                if let index = savedRoutines.firstIndex(where: { $0.id == updated.id }) {
+                    savedRoutines[index] = updated
+                    onSaved(savedRoutines)
+                }
+            }
+        }
+    }
+}
+
+/// Renaming and editing the exercises of an existing saved routine — reuses `ExerciseListEditor`
+/// so this gets the same reorder/superset/duplicate affordances as the main builder. `routine.id`
+/// is preserved on save: Siri/`ExerciseTimerAppIntents` and `pendingRoutineStart` resolve saved
+/// routines by id, so a rename or exercise edit must not change it.
+struct RoutineEditorView: View {
+    let routine: Routine
+    let onSave: (Routine) -> Void
+
+    @State private var name: String
+    @State private var exercises: [Exercise]
+    @Environment(\.dismiss) private var dismiss
+
+    init(routine: Routine, onSave: @escaping (Routine) -> Void) {
+        self.routine = routine
+        self.onSave = onSave
+        _name = State(initialValue: routine.name)
+        _exercises = State(initialValue: routine.exercises)
+    }
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func save() {
+        exercises.normalizeSupersets()
+        onSave(Routine(id: routine.id, name: name.trimmingCharacters(in: .whitespaces), exercises: exercises))
+        dismiss()
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    TextField("Routine Name", text: $name)
+                }
+                ExerciseListEditor(exercises: $exercises)
+            }
+#if os(iOS)
+            .listStyle(.insetGrouped)
+#else
+            .listStyle(.inset)
+#endif
+            .navigationTitle("Edit Routine")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                // Pinned so this prominent action stays reachable even in a vertically-presented
+                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
+                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
+                if #available(iOS 27.0, *) {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button("Save", action: save).disabled(!canSave)
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Save", action: save).disabled(!canSave)
+                    }
+                }
+            }
+#else
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save).disabled(!canSave)
+                }
+            }
+            // See RoutineManagerSheet for why macOS sheets need an explicit size.
             .frame(minWidth: 420, idealWidth: 480, minHeight: 480, idealHeight: 560)
 #endif
         }
@@ -3068,7 +3386,7 @@ struct WatchSearchView: View {
         .navigationTitle("Starting Workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { isPresented = false }
             }
         }
@@ -3136,23 +3454,26 @@ struct WatchSearchView: View {
 
 struct ExerciseDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
-    
+    static var writableContentTypes: [UTType] { [.json] }
+
     var exercises: [Exercise]
-    
+
     init(exercises: [Exercise]) {
         self.exercises = exercises
     }
-    
+
     init(configuration: ReadConfiguration) throws {
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
         exercises = try JSONDecoder().decode([Exercise].self, from: data)
     }
-    
+
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         let data = try JSONEncoder().encode(exercises)
-        return FileWrapper(regularFileWithContents: data)
+        let wrapper = FileWrapper(regularFileWithContents: data)
+        wrapper.preferredFilename = "exercises.json"
+        return wrapper
     }
 }
 

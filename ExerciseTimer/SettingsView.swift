@@ -11,12 +11,26 @@ struct SettingsView: View {
     /// the parent is responsible for actually presenting the guide once this sheet closes,
     /// since two sheets can't be presented from the same view at once.
     @Binding var requestOnboarding: Bool
+    /// Forwarded to `HeartRateZonesView` so a manual-zone edit can re-push the exercise list (and
+    /// the now-updated zone settings it's bundled with) to the watch — see `applyLiveAdjustment`'s
+    /// sibling `persistExercises()` in `ExerciseListView`, which is what this actually calls.
+    var onZoneSettingsChanged: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink {
+                        HeartRateZonesView(onSettingsChanged: onZoneSettingsChanged)
+                    } label: {
+                        HStack {
+                            Image(systemName: "heart.fill")
+                            Text("Heart Rate Zones")
+                        }
+                    }
+                }
 #if canImport(UIKit)
                 Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
                     Toggle(isOn: $keepScreenAwake) {
@@ -54,8 +68,17 @@ struct SettingsView: View {
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                // Pinned so this prominent action stays reachable even in a vertically-presented
+                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
+                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
+                if #available(iOS 27.0, *) {
+                    ToolbarItem(placement: .topBarPinnedTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
                 }
             }
 #else

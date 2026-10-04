@@ -83,11 +83,14 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
     
-    /// Update application context with exercise list (reliable, persisted delivery)
-    func updateContext(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?) {
+    /// Update application context with exercise list (reliable, persisted delivery).
+    /// `hrZoneSettings` isn't defaulted to `HRZoneStore.load()` because a default-argument
+    /// expression is evaluated in a nonisolated context, which can't reference this module's
+    /// (MainActor-isolated by default) declarations — callers pass it explicitly instead.
+    func updateContext(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?, hrZoneSettings: HRZoneSettings) {
         guard let session, session.activationState == .activated else { return }
         guard let exerciseData = try? JSONEncoder().encode(exercises) else { return }
-        
+
         var context: [String: Any] = [
             WCContextKey.exercises: exerciseData,
             WCContextKey.healthKitEnabled: healthKitEnabled
@@ -95,7 +98,10 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         if let activityType {
             context[WCContextKey.activityType] = activityType
         }
-        
+        if let zoneData = try? JSONEncoder().encode(hrZoneSettings) {
+            context[WCContextKey.hrZoneSettings] = zoneData
+        }
+
         try? session.updateApplicationContext(context)
     }
     
@@ -118,7 +124,14 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 self.receivedActivityType = actType
             }
         }
-        
+        // Written straight to this device's own UserDefaults under the same key HRZoneStore
+        // reads from, so HealthKitWorkoutManager doesn't need to know whether it's running
+        // standalone (reading its own settings) or receiving a phone-synced copy.
+        if let zoneData = message[WCContextKey.hrZoneSettings] as? Data,
+           let zoneSettings = try? JSONDecoder().decode(HRZoneSettings.self, from: zoneData) {
+            HRZoneStore.save(zoneSettings)
+        }
+
         if let commandData = message[WCContextKey.workoutCommand] as? Data,
            let command = try? JSONDecoder().decode(WorkoutCommand.self, from: commandData) {
             Task { @MainActor in

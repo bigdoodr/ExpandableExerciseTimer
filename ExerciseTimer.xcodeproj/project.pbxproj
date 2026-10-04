@@ -85,6 +85,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Shared/Exercise.swift,
+				Shared/HeartRateZones.swift,
 				Shared/WatchConnectivityManager.swift,
 				Shared/WorkoutState.swift,
 			);
@@ -564,7 +565,7 @@
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate, calories, and age to track your workout performance and estimate heart-rate zones.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -625,7 +626,7 @@
 				INFOPLIST_FILE = ExerciseTimer/Info.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate, calories, and age to track your workout performance and estimate heart-rate zones.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -774,7 +775,7 @@
 				INFOPLIST_FILE = "ExpandableExerciseTimerWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate, calories, and age to track your workout performance and estimate heart-rate zones.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = rocks.scruggsfam.productions.ExpandableExerciseTimer;
@@ -812,7 +813,7 @@
 				INFOPLIST_FILE = "ExpandableExerciseTimerWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = ExpandableExerciseTimerWatch;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate and calories to track your workout performance.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your heart rate, calories, and age to track your workout performance and estimate heart-rate zones.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs permission to save your workouts to the Health app.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = rocks.scruggsfam.productions.ExpandableExerciseTimer;

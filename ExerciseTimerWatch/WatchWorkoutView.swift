@@ -146,20 +146,25 @@ struct WatchWorkoutView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
-                // Weight reminder (if set)
-                if let currentEx = engine.currentExercise, let weight = currentEx.weight {
-                    Text(formatWeight(weight, unit: currentEx.weightUnit))
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                }
-
-                // Target reps reminder (if rep-based)
-                if let currentEx = engine.currentExercise,
-                   !currentEx.isTimeBased,
-                   let reps = currentEx.targetReps {
-                    Text("\(reps) reps")
-                        .font(.caption2)
-                        .foregroundStyle(.purple)
+                // Reps and weight share one line (e.g. "8–10 reps @ 50 LB"), matching the phone.
+                if let currentEx = engine.currentExercise {
+                    HStack(spacing: 4) {
+                        if !currentEx.isTimeBased, let reps = currentEx.targetReps {
+                            Text(repsRangeText(reps: reps, repsMax: currentEx.targetRepsMax))
+                                .font(.caption2)
+                                .foregroundStyle(.purple)
+                        }
+                        if let weight = currentEx.weight {
+                            if !currentEx.isTimeBased, currentEx.targetReps != nil {
+                                Text("@")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(formatWeight(weight, unit: currentEx.weightUnit))
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
+                    }
                 }
                 
                 // Phase indicator + timer
@@ -553,6 +558,14 @@ struct WatchWorkoutView: View {
             : String(format: "%.1f", weight)
         return "\(rounded) \(unit.rawValue)"
     }
+
+    /// Formats target reps as "10 reps" or, when a range's upper bound differs, "8–10 reps".
+    private func repsRangeText(reps: Int, repsMax: Int?) -> String {
+        if let repsMax, repsMax != reps {
+            return "\(reps)–\(repsMax) reps"
+        }
+        return "\(reps) reps"
+    }
     
     // MARK: - Actions
     
@@ -750,6 +763,9 @@ struct WatchWorkoutView: View {
 
         case .updateWeight(let exerciseIndex, let weight, let weightUnit):
             engine.applyWeightUpdate(exerciseIndex: exerciseIndex, weight: weight, weightUnit: weightUnit)
+
+        case .updateTargetReps(let exerciseIndex, let reps, let repsMax):
+            engine.applyTargetRepsUpdate(exerciseIndex: exerciseIndex, reps: reps, repsMax: repsMax)
 
         case .healthData, .repsComplete, .skipPhase, .zoneSummary:
             break
