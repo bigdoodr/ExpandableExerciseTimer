@@ -317,49 +317,57 @@ struct WatchWorkoutView: View {
                     Divider()
                         .padding(.vertical, 4)
                     
-                    // Pause/Resume
-                    Button(action: {
-                        let willPause = !engine.isPaused
-                        engine.isPaused = willPause
-                        if healthKit.isWorkoutActive {
-                            if willPause {
-                                healthKit.pauseWorkout()
-                            } else {
-                                healthKit.resumeWorkout()
+                    // Pause/Skip/End share one row, each icon captioned below, to cut down on scrolling.
+                    HStack(spacing: 0) {
+                        Button(action: {
+                            let willPause = !engine.isPaused
+                            engine.isPaused = willPause
+                            if healthKit.isWorkoutActive {
+                                if willPause {
+                                    healthKit.pauseWorkout()
+                                } else {
+                                    healthKit.resumeWorkout()
+                                }
                             }
+                            connectivity.sendWorkoutCommand(willPause ? .pause : .resume)
+                        }) {
+                            VStack(spacing: 2) {
+                                Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
+                                    .font(.title3)
+                                Text(engine.isPaused ? "Resume" : "Pause")
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(.orange)
                         }
-                        connectivity.sendWorkoutCommand(willPause ? .pause : .resume)
-                    }) {
-                        HStack {
-                            Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
-                            Text(engine.isPaused ? "Resume" : "Pause")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    }
+                        .frame(maxWidth: .infinity)
 
-                    // Skip current phase — mirrors the iPhone's own Skip button; iPhone remains
-                    // the timer authority and sends the resulting state back to the watch.
-                    Button(action: {
-                        WKInterfaceDevice.current().play(.click)
-                        connectivity.sendWorkoutCommand(.skipPhase)
-                    }) {
-                        HStack {
-                            Image(systemName: "forward.fill")
-                            Text("Skip")
+                        // Skip current phase — mirrors the iPhone's own Skip button; iPhone remains
+                        // the timer authority and sends the resulting state back to the watch.
+                        Button(action: {
+                            WKInterfaceDevice.current().play(.click)
+                            connectivity.sendWorkoutCommand(.skipPhase)
+                        }) {
+                            VStack(spacing: 2) {
+                                Image(systemName: "forward.fill")
+                                    .font(.title3)
+                                Text("Skip")
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(.blue)
                         }
-                        .font(.caption)
-                        .foregroundStyle(.blue)
-                    }
+                        .frame(maxWidth: .infinity)
 
-                    // End workout — shows confirmation first
-                    Button(action: { showEndConfirmation = true }) {
-                        HStack {
-                            Image(systemName: "stop.fill")
-                            Text("End Workout")
+                        // End workout — shows confirmation first
+                        Button(action: { showEndConfirmation = true }) {
+                            VStack(spacing: 2) {
+                                Image(systemName: "stop.fill")
+                                    .font(.title3)
+                                Text("End")
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(.red)
                         }
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity)
                     }
                 }
                 

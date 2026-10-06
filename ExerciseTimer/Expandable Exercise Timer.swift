@@ -1446,6 +1446,23 @@ struct WorkoutView: View {
         }
     }
 
+    // Combines the phase label (REST/EXERCISE/REP-BASED) with the exercise counter on one line,
+    // freeing up the vertical space the counter used to take above the exercise title.
+    private func phaseHeader(label: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.title)
+                .bold()
+                .foregroundStyle(color)
+            Text("•")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            Text("Exercise \(displayExerciseNumber) of \(totalExercises)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var workoutContent: some View {
         ScrollView {
             VStack(spacing: 30) {
@@ -1455,10 +1472,6 @@ struct WorkoutView: View {
                     .foregroundStyle(.secondary)
 
                 VStack(spacing: 8) {
-                    Text("Exercise \(displayExerciseNumber) of \(totalExercises)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    
                     Text(currentExercise.name.isEmpty ? "Exercise \(displayExerciseNumber)" : currentExercise.name)
                         .font(.largeTitle)
                         .bold()
@@ -1525,11 +1538,8 @@ struct WorkoutView: View {
 
                 if isResting {
                     VStack(spacing: 20) {
-                        Text("REST")
-                            .font(.title)
-                            .bold()
-                            .foregroundStyle(.orange)
-                        
+                        phaseHeader(label: "REST", color: .orange)
+
                         Text(formatTime(timeRemaining))
                             .font(.system(size: 72, weight: .bold, design: .rounded))
                             .monospacedDigit()
@@ -1537,10 +1547,7 @@ struct WorkoutView: View {
                     .padding()
                 } else if currentExercise.isTimeBased {
                     VStack(spacing: 20) {
-                        Text("EXERCISE")
-                            .font(.title)
-                            .bold()
-                            .foregroundStyle(.green)
+                        phaseHeader(label: "EXERCISE", color: .green)
 
                         Text(formatTime(timeRemaining))
                             .font(.system(size: 72, weight: .bold, design: .rounded))
@@ -1553,10 +1560,7 @@ struct WorkoutView: View {
                     .padding()
                 } else {
                     VStack(spacing: 20) {
-                        Text("REP-BASED")
-                            .font(.title)
-                            .bold()
-                            .foregroundStyle(.blue)
+                        phaseHeader(label: "REP-BASED", color: .blue)
 
                         if let roundTimeRemaining = groupRoundTimeRemaining {
                             timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
