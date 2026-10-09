@@ -24,6 +24,12 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
     /// standard 50%-of-max boundary. `nil` if unavailable (permission denied, no data yet, etc.),
     /// in which case the fallback zone config falls back to the standard 5 zones with no resting tier.
     @Published var restingHeartRate: Double? = nil
+    /// The person's preferred heart-rate zone boundaries from Health Settings (automatic or
+    /// manual, whichever is active there) — the same zones a workout actually uses when this app
+    /// doesn't override them with its own manual zones. `nil` when the person hasn't configured
+    /// zones in Health at all, or on devices below iOS/watchOS 27. `HeartRateZonesView` reads this
+    /// so Settings always shows the zones the Health app considers authoritative.
+    @Published var preferredHRZoneBoundaries: [Double]? = nil
     /// Zero-based index of the current HR zone, driven by HealthKit's live zone delegate.
     @Published var currentHRZoneIndex: Int? = nil
     /// The finished HKWorkout after endWorkout() completes; provides zoneGroupsByType for recap.
@@ -84,6 +90,27 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
         // Attempt DOB fetch regardless of write auth — characteristic reads are separate.
         fetchMaxHeartRate()
         await fetchRestingHeartRate()
+        await fetchPreferredHRZoneBoundaries()
+    }
+
+    /// Reads the person's preferred heart-rate zone configuration straight from Health Settings —
+    /// the same configuration `applyZoneConfiguration(to:)` defers to when starting a workout —
+    /// so `HeartRateZonesView` can display the zones that are actually authoritative instead of
+    /// recomputing its own from age. Leaves `preferredHRZoneBoundaries` nil if the person hasn't
+    /// configured zones in Health, or on OS versions below the API's 27.0 availability.
+    func fetchPreferredHRZoneBoundaries() async {
+        guard #available(iOS 27.0, watchOS 27.0, *) else {
+            preferredHRZoneBoundaries = nil
+            return
+        }
+        guard let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate) else { return }
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        guard let config = try? await healthStore.preferredWorkoutZoneConfiguration(for: hrType) else {
+            preferredHRZoneBoundaries = nil
+            return
+        }
+        // Each zone but the last carries the upper boundary between it and the next zone.
+        preferredHRZoneBoundaries = config.zones.compactMap { $0.maximum?.doubleValue(for: bpm) }
     }
 
     /// Computes max heart rate as 220 − age using the user's HealthKit date of birth.
@@ -219,9 +246,11 @@ final class HealthKitWorkoutManager: NSObject, ObservableObject {
 
     /// Sets the heart-rate zone boundaries this workout should use, in priority order: this app's
     /// own manual zones (set in Settings), then whatever the person already has in Health
-    /// Settings (left alone by doing nothing), then a 220−age (or default-185) fallback — only
-    /// reached when neither of the first two applies. A resting-HR boundary is prepended to the
-    /// fallback when available, splitting the lowest tier into a distinct resting zone.
+    /// Settings (left alone by doing nothing — the Health app is the source of truth for
+    /// `HeartRateZonesView` too, via `fetchPreferredHRZoneBoundaries()`), then a 220−age (or
+    /// default-185) fallback — only reached when neither of the first two applies. A resting-HR
+    /// boundary is prepended to the fallback when available, splitting the lowest tier into a
+    /// distinct resting zone.
     @available(iOS 27.0, watchOS 27.0, *)
     private func applyZoneConfiguration(to builder: HKLiveWorkoutBuilder) async {
         let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!

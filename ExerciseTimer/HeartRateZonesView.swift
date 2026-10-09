@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Shows how heart-rate zones break down — from the person's age (read from the Health app) when
-/// available, or a default max heart rate otherwise — and lets them override with manual zones,
-/// similar to the Health app's own zone editor. Pushed from `SettingsView`.
+/// Shows how heart-rate zones break down — from the person's preferred zones in Health Settings
+/// when available, falling back to an age-based estimate otherwise — and lets them override with
+/// manual zones, similar to the Health app's own zone editor. Pushed from `SettingsView`.
 struct HeartRateZonesView: View {
     /// Called after a manual-zone edit is saved, so the caller can re-push the updated settings
     /// to the watch (there's no other signal for "zones changed" short of the exercise list itself
@@ -27,12 +27,18 @@ struct HeartRateZonesView: View {
         if let manual = zoneSettings.upperBounds, !manual.isEmpty {
             return manual
         }
+#if os(iOS) && canImport(HealthKit)
+        if let healthBounds = healthKit.preferredHRZoneBoundaries, !healthBounds.isEmpty {
+            return healthBounds
+        }
+#endif
         return HRZoneCalculator.boundaries(maxHR: effectiveMaxHR)
     }
 
     private var zoneSourceDescription: String {
         if zoneSettings.upperBounds != nil { return "Manual" }
 #if os(iOS) && canImport(HealthKit)
+        if healthKit.preferredHRZoneBoundaries?.isEmpty == false { return "Health app" }
         if healthKit.age != nil { return "Based on your age" }
 #endif
         return "Default"
@@ -42,7 +48,13 @@ struct HeartRateZonesView: View {
         Form {
 #if os(iOS) && canImport(HealthKit)
             Section {
-                if let age = healthKit.age {
+                if healthKit.preferredHRZoneBoundaries?.isEmpty == false {
+                    Label(
+                        "These are the heart-rate zones you've set in the Health app. Here's how they currently break down.",
+                        systemImage: "heart.text.square.fill"
+                    )
+                    .foregroundStyle(.secondary)
+                } else if let age = healthKit.age {
                     Label(
                         "You allowed Exercise Timer to read your age from the Health app. It indicates you're \(age) years old — estimated max heart rate \(Int(healthKit.maxHeartRate)) BPM. Here's how that breaks down per zone.",
                         systemImage: "heart.text.square.fill"
@@ -61,7 +73,7 @@ struct HeartRateZonesView: View {
             }
 #endif
             Section {
-                ForEach(1...5, id: \.self) { zoneNumber in
+                ForEach(1...(effectiveBoundaries.count + 1), id: \.self) { zoneNumber in
                     zoneRow(zoneNumber)
                 }
             } header: {
@@ -107,6 +119,11 @@ struct HeartRateZonesView: View {
             }
         }
         .navigationTitle("Heart Rate Zones")
+#if os(iOS) && canImport(HealthKit)
+        .task {
+            await healthKit.fetchPreferredHRZoneBoundaries()
+        }
+#endif
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
@@ -120,6 +137,9 @@ struct HeartRateZonesView: View {
             Circle()
                 .fill(HRZoneCalculator.color(forZone: number))
                 .frame(width: 12, height: 12)
+            Text("\(number)")
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 16, alignment: .leading)
             Text(HRZoneCalculator.name(forZone: number))
             Spacer()
             Text(rangeText(lower: lower, upper: upper))
