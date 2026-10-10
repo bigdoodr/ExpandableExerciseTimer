@@ -45,13 +45,13 @@ struct WatchWorkoutView: View {
                 waitingView
             }
         }
-        .alert("End Workout?", isPresented: $showEndConfirmation) {
+        .alert(engine.kind.endAlertTitle, isPresented: $showEndConfirmation) {
             Button("End", role: .destructive) {
                 endWorkoutWithRecap(completedNaturally: false)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Are you sure you want to end this workout?")
+            Text(engine.kind.endAlertMessage)
         }
         // Handlers live on the outer Group so commands are processed no matter
         // which screen (waiting / active / recap) is currently showing.
@@ -94,17 +94,18 @@ struct WatchWorkoutView: View {
                 Button(action: startWorkout) {
                     HStack {
                         Image(systemName: "play.fill")
-                        Text("Start Workout")
+                        Text(connectivity.receivedSessionKind.watchStartButtonLabel)
                     }
                     .font(.headline)
-                    .foregroundStyle(.green)
                 }
+                .buttonStyle(.glassProminent)
+                .tint(.green)
                 
-                Text("\(connectivity.receivedExercises.count) exercise(s) ready")
+                Text("\(connectivity.receivedExercises.count) \(connectivity.receivedSessionKind.watchItemsReadySuffix)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("Start a workout\non your iPhone")
+                Text("Start a timer\non your iPhone")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -133,7 +134,7 @@ struct WatchWorkoutView: View {
                     .foregroundStyle(.secondary)
                 
                 // Exercise count
-                Text("Exercise \(engine.displayExerciseNumber) of \(engine.exercises.count)")
+                Text("\(engine.kind.itemName) \(engine.displayExerciseNumber) of \(engine.exercises.count)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
@@ -142,7 +143,7 @@ struct WatchWorkoutView: View {
                     .font(.headline)
                     .lineLimit(2)
                 
-                Text(isCurrentGroupSuperset ? "Round \(engine.currentSet) of \(currentGroupRoundCount)" : "Set \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
+                Text(isCurrentGroupSuperset ? "Round \(engine.currentSet) of \(currentGroupRoundCount)" : "\(engine.kind.setUnitSingular) \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
@@ -176,7 +177,7 @@ struct WatchWorkoutView: View {
                         .font(.title3)
                         .bold()
                 } else if engine.isResting {
-                    Text("REST")
+                    Text(engine.kind.restPhaseLabel)
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.orange)
@@ -184,7 +185,7 @@ struct WatchWorkoutView: View {
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
                 } else if engine.currentExercise?.isTimeBased == true {
-                    Text("EXERCISE")
+                    Text(engine.kind.activePhaseLabel)
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.green)
@@ -192,7 +193,7 @@ struct WatchWorkoutView: View {
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
                 } else {
-                    Text("REPS")
+                    Text(engine.kind.watchManualPhaseLabel)
                         .font(.title3)
                         .bold()
                         .foregroundStyle(.blue)
@@ -201,14 +202,11 @@ struct WatchWorkoutView: View {
                         WKInterfaceDevice.current().play(.click)
                         connectivity.sendWorkoutCommand(.repsComplete)
                     }) {
-                        Text("Reps Complete")
+                        Text(engine.kind.watchManualButtonLabel)
                             .font(.caption)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.blue)
-                            .cornerRadius(8)
                     }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
                 }
                 
                 if engine.isPaused && !engine.isCompleted {
@@ -337,8 +335,9 @@ struct WatchWorkoutView: View {
                                 Text(engine.isPaused ? "Resume" : "Pause")
                                     .font(.caption2)
                             }
-                            .foregroundStyle(.orange)
                         }
+                        .buttonStyle(.glass)
+                        .tint(.orange)
                         .frame(maxWidth: .infinity)
 
                         // Skip current phase — mirrors the iPhone's own Skip button; iPhone remains
@@ -353,8 +352,9 @@ struct WatchWorkoutView: View {
                                 Text("Skip")
                                     .font(.caption2)
                             }
-                            .foregroundStyle(.blue)
                         }
+                        .buttonStyle(.glass)
+                        .tint(.blue)
                         .frame(maxWidth: .infinity)
 
                         // End workout — shows confirmation first
@@ -365,8 +365,9 @@ struct WatchWorkoutView: View {
                                 Text("End")
                                     .font(.caption2)
                             }
-                            .foregroundStyle(.red)
                         }
+                        .buttonStyle(.glass)
+                        .tint(.red)
                         .frame(maxWidth: .infinity)
                     }
                 }
@@ -405,7 +406,7 @@ struct WatchWorkoutView: View {
                     .font(.title2)
                     .foregroundStyle(recap.completedNaturally ? .green : .orange)
                 
-                Text(recap.completedNaturally ? "Workout Complete!" : "Workout Ended")
+                Text(recap.completedNaturally ? recap.kind.recapCompletedTitle : recap.kind.recapEndedTitle)
                     .font(.headline)
                 
                 Divider()
@@ -423,11 +424,11 @@ struct WatchWorkoutView: View {
                         .bold()
                 }
                 
-                // Exercises
+                // Exercises / Intervals
                 HStack {
-                    Image(systemName: "figure.strengthtraining.traditional")
+                    Image(systemName: recap.kind.recapItemsIcon)
                         .foregroundStyle(.green)
-                    Text("Exercises")
+                    Text(recap.kind.recapItemsLabel)
                         .font(.caption)
                     Spacer()
                     Text("\(recap.exercisesCompleted)/\(recap.totalExercises)")
@@ -435,11 +436,11 @@ struct WatchWorkoutView: View {
                         .bold()
                 }
                 
-                // Sets
+                // Sets / Cycles
                 HStack {
-                    Image(systemName: "repeat")
+                    Image(systemName: recap.kind.recapSetsIcon)
                         .foregroundStyle(.purple)
-                    Text("Sets")
+                    Text(recap.kind.recapSetsLabel)
                         .font(.caption)
                     Spacer()
                     Text("\(recap.setsCompleted)/\(recap.totalSets)")
@@ -516,9 +517,10 @@ struct WatchWorkoutView: View {
                 Button(action: dismissRecap) {
                     Text("Done")
                         .font(.headline)
-                        .foregroundStyle(.green)
                         .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.glassProminent)
+                .tint(.green)
             }
             .padding()
         }
@@ -532,8 +534,8 @@ struct WatchWorkoutView: View {
     }
 
     private var currentExerciseName: String {
-        guard let exercise = engine.currentExercise else { return "Exercise" }
-        return exercise.name.isEmpty ? "Exercise \(engine.displayExerciseNumber)" : exercise.name
+        guard let exercise = engine.currentExercise else { return engine.kind.itemName }
+        return exercise.name.isEmpty ? "\(engine.kind.itemName) \(engine.displayExerciseNumber)" : exercise.name
     }
 
     private var currentGroupRange: ClosedRange<Int> {
@@ -579,13 +581,14 @@ struct WatchWorkoutView: View {
     
     private func startWorkout() {
         let exercises = connectivity.receivedExercises
+        let kind = connectivity.receivedSessionKind
         let hkEnabled = connectivity.receivedHealthKitEnabled
         let actType = connectivity.receivedActivityType
         let workoutID = UUID()
         currentWorkoutID = workoutID
 
-        connectivity.sendWorkoutCommand(.start(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType, workoutID: workoutID))
-        engine.startWorkout(exercises: exercises, healthKitEnabled: hkEnabled, activityType: actType)
+        connectivity.sendWorkoutCommand(.start(exercises: exercises, kind: kind, healthKitEnabled: hkEnabled, activityType: actType, workoutID: workoutID))
+        engine.startWorkout(exercises: exercises, kind: kind, healthKitEnabled: hkEnabled, activityType: actType)
         workoutStartDate = Date()
         sessionElapsed = 0
         
@@ -614,6 +617,7 @@ struct WatchWorkoutView: View {
         let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
         
         recapData = WorkoutRecap(
+            kind: engine.kind,
             duration: duration,
             exercisesCompleted: exercisesCompleted,
             totalExercises: engine.exercises.count,
@@ -664,13 +668,13 @@ struct WatchWorkoutView: View {
         guard let command else { return }
         
         switch command {
-        case .start(let exerciseList, let hkEnabled, let actType, let workoutID):
+        case .start(let exerciseList, let kind, let hkEnabled, let actType, let workoutID):
             // A new workout always dismisses any leftover recap
             showRecap = false
             recapData = nil
             heartRateReadings = []
             currentWorkoutID = workoutID
-            engine.startWorkout(exercises: exerciseList, healthKitEnabled: hkEnabled, activityType: actType)
+            engine.startWorkout(exercises: exerciseList, kind: kind, healthKitEnabled: hkEnabled, activityType: actType)
             workoutStartDate = Date()
             sessionElapsed = 0
             
@@ -702,6 +706,7 @@ struct WatchWorkoutView: View {
                     let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
                     await MainActor.run {
                         recapData = WorkoutRecap(
+                            kind: engine.kind,
                             duration: duration,
                             exercisesCompleted: engine.exercises.count,
                             totalExercises: engine.exercises.count,
@@ -731,6 +736,7 @@ struct WatchWorkoutView: View {
             let setsCompleted = computeSetsCompleted(completedNaturally: false)
             let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
             recapData = WorkoutRecap(
+                kind: engine.kind,
                 duration: duration,
                 exercisesCompleted: exercisesCompleted,
                 totalExercises: engine.exercises.count,
@@ -784,6 +790,7 @@ struct WatchWorkoutView: View {
 // MARK: - Recap Data
 
 struct WorkoutRecap {
+    var kind: SessionKind = .workout
     let duration: TimeInterval
     let exercisesCompleted: Int
     let totalExercises: Int

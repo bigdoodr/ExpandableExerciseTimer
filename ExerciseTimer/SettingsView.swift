@@ -1,22 +1,18 @@
 import SwiftUI
 
-/// App-wide preferences that don't need to live in the exercise builder's main list —
-/// moved here to keep that list focused on exercises themselves.
+/// App-wide preferences — now a tab in its own right rather than a sheet, so it stays visible
+/// as the person switches between the Exercises and Timers tabs.
 struct SettingsView: View {
 #if canImport(UIKit)
-    @Binding var keepScreenAwake: Bool
-    @Binding var enableBackgroundAudio: Bool
+    @AppStorage("keepScreenAwake") private var keepScreenAwake = false
+    @AppStorage("enableBackgroundAudio") private var enableBackgroundAudio = false
 #endif
-    /// Set to true and dismissed by this view when the user taps "View Onboarding Guide" —
-    /// the parent is responsible for actually presenting the guide once this sheet closes,
-    /// since two sheets can't be presented from the same view at once.
-    @Binding var requestOnboarding: Bool
+    /// Called when the person taps "View Onboarding Guide" — presented directly over whichever
+    /// tab is currently selected, since Settings is a tab rather than a sheet now.
+    var onShowOnboarding: () -> Void = {}
     /// Forwarded to `HeartRateZonesView` so a manual-zone edit can re-push the exercise list (and
-    /// the now-updated zone settings it's bundled with) to the watch — see `applyLiveAdjustment`'s
-    /// sibling `persistExercises()` in `ExerciseListView`, which is what this actually calls.
+    /// the now-updated zone settings it's bundled with) to the watch.
     var onZoneSettingsChanged: () -> Void = {}
-
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -32,7 +28,7 @@ struct SettingsView: View {
                     }
                 }
 #if canImport(UIKit)
-                Section(footer: Text("Prevents the display from sleeping while a workout is active. This does not keep the app running in the background.")) {
+                Section(footer: Text("Prevents the display from sleeping while a session is active. This does not keep the app running in the background.")) {
                     Toggle(isOn: $keepScreenAwake) {
                         HStack {
                             Image(systemName: keepScreenAwake ? "moon.zzz.fill" : "moon.zzz")
@@ -54,8 +50,7 @@ struct SettingsView: View {
 #endif
                 Section {
                     Button {
-                        requestOnboarding = true
-                        dismiss()
+                        onShowOnboarding()
                     } label: {
                         HStack {
                             Image(systemName: "questionmark.circle")
@@ -67,28 +62,6 @@ struct SettingsView: View {
             .navigationTitle("Settings")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // Pinned so this prominent action stays reachable even in a vertically-presented
-                // toolbar (e.g. iPhone Duo's outer display) — see "Preparing your app for iPhone Duo".
-                // topBarPinnedTrailing needs iOS 27; older iOS falls back to the plain trailing spot.
-                if #available(iOS 27.0, *) {
-                    ToolbarItem(placement: .topBarPinnedTrailing) {
-                        Button("Done") { dismiss() }
-                    }
-                } else {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") { dismiss() }
-                    }
-                }
-            }
-#else
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            // See RoutineManagerSheet for why macOS sheets need an explicit size.
-            .frame(minWidth: 420, idealWidth: 460, minHeight: 320, idealHeight: 360)
 #endif
         }
     }

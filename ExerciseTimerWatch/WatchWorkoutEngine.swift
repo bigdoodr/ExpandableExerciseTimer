@@ -9,6 +9,7 @@ internal import Combine
 final class WatchWorkoutEngine: ObservableObject {
     
     @Published var exercises: [Exercise] = []
+    @Published var kind: SessionKind = .workout
     @Published var currentExerciseIndex = 0
     @Published var currentSet = 1
     @Published var isResting = false
@@ -35,8 +36,9 @@ final class WatchWorkoutEngine: ObservableObject {
     
     /// Set up the workout display. Called when either device initiates a workout.
     /// Does NOT start timers — the iPhone sends `.updatePhase` with timing data.
-    func startWorkout(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?) {
+    func startWorkout(exercises: [Exercise], kind: SessionKind, healthKitEnabled: Bool, activityType: String?) {
         self.exercises = exercises
+        self.kind = kind
         self.currentExerciseIndex = 0
         self.currentSet = 1
         self.isResting = false
@@ -118,7 +120,7 @@ final class WatchWorkoutEngine: ObservableObject {
         func nextExerciseAfterGroupText() -> String {
             let nextIndex = groupRange.upperBound + 1
             if nextIndex >= exercises.count {
-                return "Up Next: Workout Complete"
+                return "Up Next: \(kind.upNextCompleteLabel)"
             }
             return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
         }
@@ -128,11 +130,11 @@ final class WatchWorkoutEngine: ObservableObject {
             let nextSet = currentSet + 1
             if nextSet <= roundCount {
                 let first = exercises[groupRange.lowerBound]
-                let name = first.name.isEmpty ? "Exercise \(groupRange.lowerBound + 1)" : first.name
+                let name = first.name.isEmpty ? "\(kind.itemName) \(groupRange.lowerBound + 1)" : first.name
                 if first.isTimeBased {
                     return "Up Next: \(name) – Round \(nextSet)"
                 } else {
-                    return "Up Next: \(name) – Round \(nextSet) (Reps)"
+                    return "Up Next: \(name) – Round \(nextSet) (\(kind == .workout ? "Reps" : "Prompt"))"
                 }
             } else {
                 return nextExerciseAfterGroupText()
@@ -165,7 +167,7 @@ final class WatchWorkoutEngine: ObservableObject {
     }
 
     private func nextExerciseLabel(_ exercise: Exercise, index: Int) -> String {
-        let name = exercise.name.isEmpty ? "Exercise \(index + 1)" : exercise.name
+        let name = exercise.name.isEmpty ? "\(kind.itemName) \(index + 1)" : exercise.name
         let summary = exercise.quickSummary
         return summary.isEmpty ? name : "\(name) · \(summary)"
     }

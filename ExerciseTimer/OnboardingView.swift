@@ -30,10 +30,10 @@ struct OnboardingView: View {
     private static var fullSteps: [OnboardingStep] {
         #if os(macOS)
         let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period."
-        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Reopen this guide anytime from the gear icon in the toolbar."
+        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Reopen this guide anytime from the Settings tab."
         #else
         let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period. You can also start and control your workout from an Apple Watch."
-        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too. Reopen this guide anytime from the gear icon in the toolbar."
+        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too. Reopen this guide anytime from the Settings tab."
         #endif
 
         return [
@@ -59,7 +59,7 @@ struct OnboardingView: View {
                 symbol: "folder.fill",
                 color: .teal,
                 title: "Save, Load & Share Routines",
-                description: "Browse built-in routines like Athlean-X's Perfect PPL Split anytime from the folder icon, or tap \"Save as Routine…\" to save your current list under a custom name. Tap the share icon (↑) to export your exercises as a JSON file for backups or sharing, and the download icon (↓) to import them."
+                description: "Switch to the Routines tab to browse built-in routines like Athlean-X's Perfect PPL Split, or tap \"Save as Routine…\" here to save your current list under a custom name. From the Routines tab, swipe a saved routine to export it as a JSON file, or use the Import button there to bring one back in."
             ),
             OnboardingStep(
                 symbol: "speaker.wave.2.fill",
@@ -89,8 +89,14 @@ struct OnboardingView: View {
             OnboardingStep(
                 symbol: "sparkles",
                 color: .blue,
-                title: "What's New in 2.0",
+                title: "What's New in 2.2",
                 description: introDescription
+            ),
+            OnboardingStep(
+                symbol: "square.grid.2x2.fill",
+                color: .green,
+                title: "Tabs, Plus a New Timers Tab",
+                description: "Exercises, Routines, and Settings are now tabs instead of toolbar buttons and sheets. A new Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
             ),
             OnboardingStep(
                 symbol: "books.vertical.fill",
@@ -118,9 +124,9 @@ struct OnboardingView: View {
         #endif
 
         #if os(macOS)
-        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets and duration — the moment you finish. Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the question-mark button on the main screen."
+        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets and duration — the moment you finish. Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the Settings tab."
         #else
-        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets, duration, and heart rate — the moment you finish. Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the question-mark button on the main screen."
+        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets, duration, and heart rate — the moment you finish. Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the Settings tab."
         #endif
 
         steps.append(

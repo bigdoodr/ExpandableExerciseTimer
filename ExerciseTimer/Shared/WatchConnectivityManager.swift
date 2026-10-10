@@ -22,6 +22,8 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var isWatchReachable = false
     @Published var receivedHealthKitEnabled = false
     @Published var receivedActivityType: String?
+    /// Whether the exercises currently held are an Exercises-tab workout or a Timers-tab session.
+    @Published var receivedSessionKind: SessionKind = .workout
     /// Time-in-zone forwarded from the watch once it ends the HealthKit session it owns.
     /// Lives here rather than in a view's `@State` because it arrives *after* the recap has
     /// replaced the workout view — any `onChange` attached to that view is torn down by then.
@@ -45,7 +47,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     /// Send a workout command to the counterpart
     func sendWorkoutCommand(_ command: WorkoutCommand) {
         // A new workout invalidates the previous workout's zone breakdown.
-        if case .start(_, _, _, let workoutID) = command {
+        if case .start(_, _, _, _, let workoutID) = command {
             currentWorkoutID = workoutID
             completedZoneSummary = []
         }
@@ -87,13 +89,14 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     /// `hrZoneSettings` isn't defaulted to `HRZoneStore.load()` because a default-argument
     /// expression is evaluated in a nonisolated context, which can't reference this module's
     /// (MainActor-isolated by default) declarations — callers pass it explicitly instead.
-    func updateContext(exercises: [Exercise], healthKitEnabled: Bool, activityType: String?, hrZoneSettings: HRZoneSettings) {
+    func updateContext(exercises: [Exercise], kind: SessionKind, healthKitEnabled: Bool, activityType: String?, hrZoneSettings: HRZoneSettings) {
         guard let session, session.activationState == .activated else { return }
         guard let exerciseData = try? JSONEncoder().encode(exercises) else { return }
 
         var context: [String: Any] = [
             WCContextKey.exercises: exerciseData,
-            WCContextKey.healthKitEnabled: healthKitEnabled
+            WCContextKey.healthKitEnabled: healthKitEnabled,
+            WCContextKey.sessionKind: kind.rawValue
         ]
         if let activityType {
             context[WCContextKey.activityType] = activityType
@@ -124,6 +127,12 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 self.receivedActivityType = actType
             }
         }
+        if let kindRaw = message[WCContextKey.sessionKind] as? String,
+           let kind = SessionKind(rawValue: kindRaw) {
+            Task { @MainActor in
+                self.receivedSessionKind = kind
+            }
+        }
         // Written straight to this device's own UserDefaults under the same key HRZoneStore
         // reads from, so HealthKitWorkoutManager doesn't need to know whether it's running
         // standalone (reading its own settings) or receiving a phone-synced copy.
@@ -138,8 +147,9 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 self.receivedCommand = command
                 self.commandSequence += 1
                 // Also extract exercises from start command
-                if case .start(let exercises, _, _, let workoutID) = command {
+                if case .start(let exercises, let kind, _, _, let workoutID) = command {
                     self.receivedExercises = exercises
+                    self.receivedSessionKind = kind
                     self.currentWorkoutID = workoutID
                     // A new workout invalidates the previous workout's zone breakdown.
                     self.completedZoneSummary = []
