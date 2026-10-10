@@ -170,13 +170,28 @@ struct Routine: Identifiable, Codable, Equatable {
         self.category = category
     }
 
-    init(from decoder: Decoder) throws {
+    // Both `init(from:)` and `encode(to:)` are marked `nonisolated` explicitly (the latter
+    // replacing the compiler-synthesized one) because `RoutineDocument` decodes/encodes a
+    // `Routine` from `FileDocument`'s nonisolated `init(configuration:)`/`fileWrapper(configuration:)`
+    // — without this, Routine's Codable conformance defaults to this module's MainActor
+    // isolation and can't be used from that nonisolated context. See the fix for the same
+    // issue in WatchConnectivityManager.updateContext.
+    nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         exercises = try container.decode([Exercise].self, forKey: .exercises)
         kind = try container.decodeIfPresent(SessionKind.self, forKey: .kind) ?? .workout
         category = try container.decodeIfPresent(String.self, forKey: .category)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(exercises, forKey: .exercises)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(category, forKey: .category)
     }
 }
 

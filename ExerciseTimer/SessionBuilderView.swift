@@ -74,8 +74,14 @@ struct SessionBuilderView: View {
 
     @ViewBuilder
     private var workoutViewForPlatform: some View {
+#if os(iOS)
         makeSessionView()
             .toolbar(.hidden, for: .tabBar)
+#else
+        // macOS shows the tab view as a sidebar, not a tab bar — ToolbarPlacement.tabBar doesn't
+        // exist there, and there's no equivalent "hide it during a session" affordance needed.
+        makeSessionView()
+#endif
     }
 
     #if os(iOS)
