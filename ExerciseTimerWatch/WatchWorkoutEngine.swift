@@ -112,10 +112,12 @@ final class WatchWorkoutEngine: ObservableObject {
         let groupRange = exercises.supersetGroupRange(containing: safeIndex)
         let roundCount = exercises.roundCount(for: groupRange)
         // Timed Superset: members run back-to-back regardless of their own restDuration, and the
-        // iPhone (timer authority) uses whatever's left of the round's time budget as the
-        // between-round rest — see `Exercise.groupTimeBudget`. The exact remaining amount isn't
-        // mirrored here, so this just predicts "a rest is coming" without a duration.
+        // iPhone (timer authority) uses whatever's left of the budget as a holding rest once the
+        // group's current round finishes — see `Exercise.groupTimeBudget`. The exact remaining
+        // amount isn't mirrored here, so this just predicts "a rest is coming" without a duration.
+        // A `wholeChain` budget only does this after the LAST round; earlier rounds loop with no rest.
         let isTimedSuperset = exercises[groupRange.lowerBound].groupTimeBudget != nil
+        let isWholeChainBudget = isTimedSuperset && exercises[groupRange.lowerBound].groupTimeBudgetScope == .wholeChain
 
         func nextExerciseAfterGroupText() -> String {
             let nextIndex = groupRange.upperBound + 1
@@ -148,7 +150,9 @@ final class WatchWorkoutEngine: ObservableObject {
             let nextIndex = currentExerciseIndex + 1
             return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
         } else if currentSet < roundCount {
-            if isTimedSuperset {
+            if isWholeChainBudget {
+                return "Up Next: Round \(currentSet + 1)"
+            } else if isTimedSuperset {
                 return "Up Next: Rest, then Round \(currentSet + 1)"
             } else if exercise.restDuration > 0 {
                 return "Up Next: Rest (\(formatTime(exercise.restDuration)))"

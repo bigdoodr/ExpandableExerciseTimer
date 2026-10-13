@@ -251,13 +251,29 @@ struct ExerciseEntryView: View {
                             .padding(.top, 4)
 
                             if exercise.groupTimeBudget != nil {
-                                DurationPickerView(title: "Time Budget per Round", duration: Binding(
-                                    get: { exercise.groupTimeBudget ?? 300 },
-                                    set: { exercise.groupTimeBudget = $0 }
-                                ))
-                                Text("Complete every linked \(kind.itemName.lowercased()) within this time, back-to-back — any time left over becomes rest before the next round.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                Picker("Budget Scope", selection: $exercise.groupTimeBudgetScope) {
+                                    Text("Per Round").tag(TimeBudgetScope.perRound)
+                                    Text("Whole Chain").tag(TimeBudgetScope.wholeChain)
+                                }
+                                .pickerStyle(.segmented)
+                                .padding(.top, 4)
+
+                                DurationPickerView(
+                                    title: exercise.groupTimeBudgetScope == .wholeChain ? "Total Time Budget" : "Time Budget per Round",
+                                    duration: Binding(
+                                        get: { exercise.groupTimeBudget ?? 300 },
+                                        set: { exercise.groupTimeBudget = $0 }
+                                    )
+                                )
+                                if exercise.groupTimeBudgetScope == .wholeChain {
+                                    Text("Complete all \(exercise.chainRepeatCount) rounds within this time, back-to-back, at your own pace — time's up ends the chain wherever it is and moves on.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("Complete every linked \(kind.itemName.lowercased()) within this time, back-to-back — any time left over becomes rest before the next round.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     } else if isGroupedNonHead {

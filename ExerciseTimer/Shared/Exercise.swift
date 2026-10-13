@@ -5,6 +5,14 @@ enum WeightUnit: String, Codable, CaseIterable {
     case kg
 }
 
+/// Whether a Timed Superset's `groupTimeBudget` is re-armed every round (`perRound`, the original
+/// behavior) or set once and shared across all of a chain's rounds (`wholeChain`, e.g. a 15-minute
+/// AMRAP-style cap to perform 10 rounds of burpees + goblet squats).
+enum TimeBudgetScope: String, Codable, CaseIterable {
+    case perRound
+    case wholeChain
+}
+
 struct Exercise: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String = ""
@@ -25,14 +33,19 @@ struct Exercise: Identifiable, Codable, Equatable {
     /// of a chain (the one where `isSupersetContinuation == false` but the next exercise continues from it);
     /// ignored everywhere else. Decoupled from `sets`, which each chain member performs once per round.
     var chainRepeatCount: Int = 1
-    /// "Timed Superset" mode: a shared time budget for one full round of a chain (e.g. 5 minutes to
+    /// "Timed Superset" mode: a shared time budget for a chain (e.g. 5 minutes to
     /// complete 8x Bench, 12x Pullovers, 15x Pushups), with any time left over counted as rest before
     /// the next round. Same scoping as `chainRepeatCount` — only meaningful on a chain's first exercise.
     /// `nil` means the chain uses each member's own `restDuration` between exercises, as usual.
+    /// Whether the budget covers one round (`groupTimeBudgetScope == .perRound`) or all of
+    /// `chainRepeatCount` rounds together (`.wholeChain`) is controlled by `groupTimeBudgetScope`.
     var groupTimeBudget: TimeInterval? = nil
+    /// Scope of `groupTimeBudget`: re-armed every round, or shared once across the whole chain.
+    /// Only meaningful when `groupTimeBudget != nil`.
+    var groupTimeBudgetScope: TimeBudgetScope = .perRound
 
     enum CodingKeys: String, CodingKey {
-        case id, name, isTimeBased, sets, exerciseDuration, restDuration, targetReps, targetRepsMax, weight, weightUnit, notes, isSupersetContinuation, chainRepeatCount, groupTimeBudget
+        case id, name, isTimeBased, sets, exerciseDuration, restDuration, targetReps, targetRepsMax, weight, weightUnit, notes, isSupersetContinuation, chainRepeatCount, groupTimeBudget, groupTimeBudgetScope
     }
 
     init() {}
@@ -53,6 +66,7 @@ struct Exercise: Identifiable, Codable, Equatable {
         isSupersetContinuation = try container.decodeIfPresent(Bool.self, forKey: .isSupersetContinuation) ?? false
         chainRepeatCount = try container.decodeIfPresent(Int.self, forKey: .chainRepeatCount) ?? 1
         groupTimeBudget = try container.decodeIfPresent(TimeInterval.self, forKey: .groupTimeBudget)
+        groupTimeBudgetScope = try container.decodeIfPresent(TimeBudgetScope.self, forKey: .groupTimeBudgetScope) ?? .perRound
     }
 
     /// A compact "weight · reps" summary for use in "Up Next" labels.

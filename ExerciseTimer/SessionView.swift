@@ -169,9 +169,10 @@ struct SessionView: View {
 
     @ViewBuilder
     private func timedSupersetRoundBadge(timeRemaining: TimeInterval) -> some View {
+        let isWholeChain = exercises[currentGroupRange.lowerBound].groupTimeBudgetScope == .wholeChain
         HStack(spacing: 6) {
             Image(systemName: "timer")
-            Text("\(formatTime(timeRemaining)) left in round")
+            Text(isWholeChain ? "\(formatTime(timeRemaining)) left" : "\(formatTime(timeRemaining)) left in round")
         }
         .font(.subheadline)
         .foregroundStyle(.secondary)
@@ -189,8 +190,10 @@ struct SessionView: View {
         let groupRange = currentGroupRange
         let roundCount = exercises.roundCount(for: groupRange)
         // Timed Superset: the group shares one time budget per round instead of each member's
-        // own `restDuration` — see `groupTimeBudget` and `advancePastCompletedSet`.
+        // own `restDuration` — see `groupTimeBudget` and `advancePastCompletedSet`. A `wholeChain`
+        // budget never inserts a leftover-time rest between rounds, so only `perRound` predicts one.
         let groupTimeBudget = exercises[groupRange.lowerBound].groupTimeBudget
+        let isPerRoundBudget = groupTimeBudget != nil && exercises[groupRange.lowerBound].groupTimeBudgetScope == .perRound
         let remainingRoundTime = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? 0)
 
         func nextExerciseAfterGroupText() -> String {
@@ -240,15 +243,18 @@ struct SessionView: View {
             return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
         } else if currentSet < roundCount {
             // Last exercise in the group, but more rounds remain
-            if groupTimeBudget != nil {
+            if isPerRoundBudget {
                 return remainingRoundTime > 0 ? "Up Next: Rest (\(formatTime(remainingRoundTime)))" : "Up Next: Round \(currentSet + 1)"
+            } else if groupTimeBudget != nil {
+                return "Up Next: Round \(currentSet + 1)"
             } else if currentExercise.restDuration > 0 {
                 return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
             } else {
                 return "Up Next: Round \(currentSet + 1)"
             }
         } else {
-            // Final round of the final exercise in the group
+            // Final round of the final exercise in the group. Both scopes behave the same here:
+            // whatever's left of the budget (per-round or whole-chain) becomes a holding rest.
             if groupTimeBudget != nil {
                 return remainingRoundTime > 0 ? "Up Next: Rest (\(formatTime(remainingRoundTime)))" : nextExerciseAfterGroupText()
             } else if currentExercise.restDuration > 0 {
@@ -479,7 +485,19 @@ struct SessionView: View {
         }
         .onReceive(timer) { _ in
             sessionElapsed = Date().timeIntervalSince(workoutStartDate)
-            if !isExiting && !isCompleted && !showRecap && !isPaused && (currentExercise.isTimeBased || isResting) {
+            guard !isExiting, !isCompleted, !showRecap, !isPaused else { return }
+            // A `wholeChain` Timed Superset's deadline can pass while the current phase has no
+            // countdown of its own (a manual-advance/rep-based exercise) — watch for that here
+            // rather than only when a phase's own timer expires, so the chain still cuts off on
+            // time even if nobody taps anything.
+            let groupRange = currentGroupRange
+            let groupHead = exercises[groupRange.lowerBound]
+            if groupHead.groupTimeBudget != nil, groupHead.groupTimeBudgetScope == .wholeChain,
+               let endDate = groupRoundEndDate, endDate.timeIntervalSinceNow <= 0 {
+                forceEndChainDueToTimeBudget()
+                return
+            }
+            if currentExercise.isTimeBased || isResting {
                 let now = Date()
                 timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
                 if timeRemaining <= 0 {
@@ -996,10 +1014,15 @@ struct SessionView: View {
         if !isResting {
             // Any rest-duration override only applies to the rest phase it was computed for.
             currentRestDurationOverride = nil
-            // Re-arm the Timed Superset round deadline whenever a fresh round begins.
+            // Re-arm the Timed Superset deadline whenever a fresh round begins — except a
+            // `wholeChain` budget, which is armed once at round 1 and shared across every
+            // round, so it's left alone once the chain is already underway.
             let groupRange = currentGroupRange
             if currentExerciseIndex == groupRange.lowerBound, let budget = exercises[groupRange.lowerBound].groupTimeBudget {
-                groupRoundEndDate = Date().addingTimeInterval(budget)
+                let scope = exercises[groupRange.lowerBound].groupTimeBudgetScope
+                if scope == .perRound || currentSet == 1 {
+                    groupRoundEndDate = Date().addingTimeInterval(budget)
+                }
             }
         }
         var duration: TimeInterval = 0
@@ -1114,13 +1137,34 @@ struct SessionView: View {
 
         // Finished the last exercise in the group for this round.
         if let groupTimeBudget {
-            let remaining = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? groupTimeBudget)
-            if remaining > 0 {
-                currentRestDurationOverride = remaining
-                isResting = true
-                startCurrentPhase()
+            if exercises[groupRange.lowerBound].groupTimeBudgetScope == .perRound {
+                let remaining = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? groupTimeBudget)
+                if remaining > 0 {
+                    currentRestDurationOverride = remaining
+                    isResting = true
+                    startCurrentPhase()
+                } else {
+                    advancePastRest(groupRange: groupRange)
+                }
             } else {
-                advancePastRest(groupRange: groupRange)
+                // Whole-chain budget: no rest between rounds — loop straight into the next one.
+                // Only once the LAST round finishes does whatever's left of the shared budget
+                // become a holding "rest" (same mechanic as `perRound`'s leftover-becomes-rest),
+                // so the countdown stays visible and the Skip button can end the chain early;
+                // the `.onReceive(timer)` watchdog ends it automatically if time runs out first.
+                let roundCount = exercises.roundCount(for: groupRange)
+                if currentSet < roundCount {
+                    advancePastRest(groupRange: groupRange)
+                } else {
+                    let remaining = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? 0)
+                    if remaining > 0 {
+                        currentRestDurationOverride = remaining
+                        isResting = true
+                        startCurrentPhase()
+                    } else {
+                        advancePastRest(groupRange: groupRange)
+                    }
+                }
             }
         } else if currentExercise.restDuration > 0 {
             isResting = true
@@ -1155,6 +1199,27 @@ struct SessionView: View {
         }
         isResting = false
         startCurrentPhase()
+    }
+
+    /// Called by the `.onReceive(timer)` watchdog when a `wholeChain` Timed Superset's shared
+    /// deadline passes while mid-exercise or mid-round (including during a manual-advance/rep-based
+    /// phase, which has no countdown of its own to expire naturally). Ends the chain immediately,
+    /// wherever it is, and proceeds to whatever comes after it — matching a real MetCon time cap.
+    private func forceEndChainDueToTimeBudget() {
+        cancelPhaseEndNotification()
+        playSound()
+        if isResting {
+            recordRestPhaseEnding()
+        } else {
+            recordActivePhaseEnding()
+        }
+        isResting = false
+        restAdvancesWithinGroup = false
+        let groupRange = currentGroupRange
+        // Force `advancePastRest` down its "finished all rounds" branch regardless of which
+        // round was actually in progress.
+        currentSet = exercises.roundCount(for: groupRange)
+        advancePastRest(groupRange: groupRange)
     }
 
     func advanceWorkout() {
