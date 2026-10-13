@@ -176,7 +176,7 @@ enum PreloadedRoutines {
 
     static let arnoldsCircuit = PreloadedRoutine(
         id: UUID(uuidString: "3EAF8D94-25A3-4DBD-8DBF-7B92B199865D")!,
-        name: "Arnold's New Workout",
+        name: "Arnold's 20 Minute Workout",
         seriesName: nil,
         routineDescription: "All 8 movements are linked as one circuit — complete one round of each, back-to-back, for 3 rounds total, resting 90 seconds after each round. Focus on form and full range of motion, not speed.",
         source: "Box Life Magazine",

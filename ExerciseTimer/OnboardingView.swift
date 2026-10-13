@@ -29,11 +29,11 @@ struct OnboardingView: View {
 
     private static var fullSteps: [OnboardingStep] {
         #if os(macOS)
-        let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period."
-        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Reopen this guide anytime from the Settings tab."
+        let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period — tap weight or target reps during a workout to adjust them on the fly."
+        let settingsDescription = "A sound plays when each exercise or rest period ends. Settings also has Heart Rate Zones, where you can review your zones and override them manually. Reopen this guide anytime from the Settings tab."
         #else
-        let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period. You can also start and control your workout from an Apple Watch."
-        let audioSettingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too. Reopen this guide anytime from the Settings tab."
+        let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period — tap weight or target reps during a workout to adjust them on the fly. You can also start and control your workout from an Apple Watch, Skip button included."
+        let settingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too, along with Heart Rate Zones, which shows the age Health provides (or explains why it can't) and lets you override your zones manually. Reopen this guide anytime from the Settings tab."
         #endif
 
         return [
@@ -41,7 +41,7 @@ struct OnboardingView: View {
                 symbol: "star.circle.fill",
                 color: .blue,
                 title: "Welcome to Exercise Timer",
-                description: "Build custom workouts from scratch or load saved routines. This guide walks through everything you need to get started."
+                description: "Build custom workouts from scratch or load saved routines on the Exercises tab, or switch to Timers for plain countdowns and prompts that don't need Health tracking. This guide walks through everything you need to get started."
             ),
             OnboardingStep(
                 symbol: "plus.circle.fill",
@@ -52,20 +52,20 @@ struct OnboardingView: View {
             OnboardingStep(
                 symbol: "link",
                 color: .pink,
-                title: "Supersets & Repeat Chains",
-                description: "Swipe an exercise right (or long-press it) and tap \"Superset\" to link it with the exercise above, pairing moves back-to-back with no rest — even a mix of timed and rep-based. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper to set how many rounds the group performs, with the last exercise's Rest Duration applying once per round."
+                title: "Supersets, Circuits & Timed Budgets",
+                description: "Swipe an exercise right (or long-press it) and tap \"Superset\" to link it with the exercise above, pairing moves back-to-back — even a mix of timed and rep-based — with an optional \"Rest Before Next Exercise\" between them. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper for rounds and a Time Budget you can scope \"Per Round\" (re-arms every round) or \"Whole Chain\" (one deadline shared across all rounds, ideal for an AMRAP-style MetCon)."
             ),
             OnboardingStep(
                 symbol: "folder.fill",
                 color: .teal,
-                title: "Save, Load & Share Routines",
-                description: "Switch to the Routines tab to browse built-in routines like Athlean-X's Perfect PPL Split, or tap \"Save as Routine…\" here to save your current list under a custom name. From the Routines tab, swipe a saved routine to export it as a JSON file, or use the Import button there to bring one back in."
+                title: "Organize, Share & Launch Routines",
+                description: "Switch to the Routines tab to browse built-in programs like Athlean-X's Perfect PPL Split, organized into folders — or tap \"Save as Routine…\" here to save your current list under a custom name and category. Tap a saved routine (or swipe it) to rename it or edit its exercises in place, swipe to export it as a JSON file, or use Import to bring one back in. Saved routines can also be started hands-free with Siri or the Shortcuts app."
             ),
             OnboardingStep(
                 symbol: "speaker.wave.2.fill",
                 color: .indigo,
                 title: "Sound & Settings",
-                description: audioSettingsDescription
+                description: settingsDescription
             ),
             OnboardingStep(
                 symbol: "play.circle.fill",
@@ -77,38 +77,56 @@ struct OnboardingView: View {
     }
 
     private static var whatsNewSteps: [OnboardingStep] {
-        // The Watch app and Heart Rate Zones both depend on WatchConnectivity/HealthKit,
-        // neither of which exist on macOS — so those two steps don't apply there.
+        // The Apple Watch Skip button/persisted-settings step depends on WatchConnectivity,
+        // which doesn't exist on macOS — so that step doesn't apply there.
         #if os(macOS)
-        let introDescription = "A lot has changed since version 1.4 — here's a look at everything new, from full workout routines and circuits to Siri and Shortcuts support."
+        let introDescription = "A lot has changed since version 2.0 — here's a look at everything new, from a dedicated Timers tab to Timed Supersets with a whole-chain budget."
         #else
-        let introDescription = "A lot has changed since version 1.4 — here's a look at everything new, from a smarter Apple Watch experience to full workout routines and circuits."
+        let introDescription = "A lot has changed since version 2.0 — here's a look at everything new, from a dedicated Timers tab to Timed Supersets with a whole-chain budget and deeper Heart Rate Zone controls."
+        #endif
+
+        #if os(macOS)
+        let zonesDescription = "Settings > Heart Rate Zones lists your five zones and lets you override them manually, the same way the Health app's own zone editor does."
+        #else
+        let zonesDescription = "Settings > Heart Rate Zones shows the age Health provides for your estimate (or explains why it can't), lists the resulting five zones, and lets you override them manually. The app now defers to whatever zones you've set in Health, matching what you'd see there."
+        #endif
+
+        #if os(macOS)
+        let progressDescription = "Tap weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped."
+        #else
+        let progressDescription = "Tap weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped, plus a \"Resting\" heart-rate tier pulled from Health."
         #endif
 
         var steps: [OnboardingStep] = [
             OnboardingStep(
                 symbol: "sparkles",
                 color: .blue,
-                title: "What's New in 2.2",
+                title: "What's New in 2.3",
                 description: introDescription
             ),
             OnboardingStep(
                 symbol: "square.grid.2x2.fill",
                 color: .green,
                 title: "Tabs, Plus a New Timers Tab",
-                description: "Exercises, Routines, and Settings are now tabs instead of toolbar buttons and sheets. A new Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
+                description: "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
             ),
             OnboardingStep(
-                symbol: "books.vertical.fill",
+                symbol: "folder.fill",
                 color: .teal,
-                title: "Built-In & Custom Routines",
-                description: "Save your own routines and load them anytime from the folder icon — or browse built-in programs like Athlean-X's Perfect PPL Split and Arnold's circuit workout. You can also start any saved routine hands-free with Siri or the Shortcuts app."
+                title: "Routine Folders & In-Place Editing",
+                description: "Built-in programs and your saved routines now drill into folders from the Routines tab instead of a flat list. Tap a saved routine — or swipe it and tap Edit — to rename it or change its exercises without starting over, and start any saved routine hands-free with Siri or the Shortcuts app."
             ),
             OnboardingStep(
                 symbol: "link",
                 color: .pink,
-                title: "Supersets & Circuits",
-                description: "Link exercises so they run back-to-back with no rest — even a mix of timed and rep-based moves. The first exercise in a chain gets a \"Repeat Chain\" stepper to set how many rounds the whole group performs, and only the last exercise's Rest Duration applies, once per round."
+                title: "Timed Supersets Get a Whole-Chain Budget",
+                description: "A chain's first exercise can carry a shared Time Budget — choose \"Per Round\" to re-arm it every round, or the new \"Whole Chain\" option to run one deadline across every round, perfect for an AMRAP-style MetCon like 15 minutes for 10 rounds of burpees and goblet squats. Chains can also rest between individual exercises now, not just after the last one each round."
+            ),
+            OnboardingStep(
+                symbol: "heart.text.square.fill",
+                color: .red,
+                title: "Deeper Heart Rate Zone Controls",
+                description: zonesDescription
             )
         ]
 
@@ -117,23 +135,17 @@ struct OnboardingView: View {
             OnboardingStep(
                 symbol: "applewatch",
                 color: .indigo,
-                title: "A Smarter Apple Watch Experience",
-                description: "The Watch app now runs natively, with live workout data synced to your iPhone in real time — starting a workout on iPhone automatically searches for your Watch, with a one-tap \"Continue on iPhone\" fallback if it can't be found. During a workout, see your live heart rate zone and fuel type, then review a full zone breakdown in your recap."
+                title: "Apple Watch Gets a Skip Button",
+                description: "The Watch now has its own Skip button to match iPhone's, and Keep Screen Awake / Background Audio settings in Settings stick between launches instead of resetting."
             )
         )
-        #endif
-
-        #if os(macOS)
-        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets and duration — the moment you finish. Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the Settings tab."
-        #else
-        let progressDescription = "Log the weight and target reps for any exercise, see session elapsed time during your workout, and get a full recap — sets, duration, and heart rate — the moment you finish. Duplicate any exercise with a swipe or long-press, and revisit this guide anytime from the Settings tab."
         #endif
 
         steps.append(
             OnboardingStep(
                 symbol: "dumbbell.fill",
                 color: .purple,
-                title: "Track Progress & Build Faster",
+                title: "Mid-Session Edits & Deeper Recaps",
                 description: progressDescription
             )
         )
