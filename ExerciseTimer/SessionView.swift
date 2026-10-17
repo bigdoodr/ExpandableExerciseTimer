@@ -100,6 +100,7 @@ struct SessionView: View {
     @State private var showWeightEditor = false
     @State private var weightEditText = ""
     @State private var weightEditUnit: WeightUnit = .lbs
+    @FocusState private var isWeightEditFieldFocused: Bool
     /// Backs the mid-session "adjust target reps" sheet — see `beginEditingReps`/`updateCurrentExerciseReps`.
     @State private var showRepsEditor = false
     @State private var repsEditText = ""
@@ -302,7 +303,7 @@ struct SessionView: View {
             Text("•")
                 .font(.title3)
                 .foregroundStyle(.secondary)
-            Text("\(kind.itemName) \(displayExerciseNumber) of \(totalExercises)")
+            Text("\(displayExerciseNumber) of \(totalExercises)")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -347,38 +348,49 @@ struct SessionView: View {
                                     }
                                     .buttonStyle(.plain)
                                 } else {
-                                    Button("Set Target Reps") {
+                                    // No target means as many reps as possible — still tappable to set one.
+                                    Button {
                                         beginEditingReps()
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Text("AMRAP")
+                                                .font(.title3)
+                                                .bold()
+                                                .foregroundStyle(.purple)
+                                            Image(systemName: "pencil.circle.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(.purple.opacity(0.6))
+                                        }
                                     }
-                                    .font(.subheadline)
                                     .buttonStyle(.plain)
-                                    .foregroundStyle(.purple)
                                 }
                             }
 
-                            if let weight = currentExercise.weight {
-                                if !currentExercise.isTimeBased, currentExercise.targetReps != nil {
-                                    Text("@")
-                                        .font(.title3)
-                                        .foregroundStyle(.secondary)
-                                }
-                                // Tappable so weight can be adjusted mid-session (e.g. a set turns out too heavy/light)
-                                // without ending the workout — see `updateCurrentExerciseWeight`.
-                                Button {
-                                    beginEditingWeight()
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Text(String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight))
-                                            .font(.title3)
-                                            .bold()
-                                            .foregroundStyle(.blue)
-                                        Image(systemName: "pencil.circle.fill")
-                                            .font(.caption)
-                                            .foregroundStyle(.blue.opacity(0.6))
-                                    }
-                                }
-                                .buttonStyle(.plain)
+                            // A missing or zero weight is bodyweight work.
+                            let weight = currentExercise.weight ?? 0
+                            if !currentExercise.isTimeBased {
+                                Text("@")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
                             }
+                            // Tappable so weight can be adjusted mid-session (e.g. a set turns out too heavy/light)
+                            // without ending the workout — see `updateCurrentExerciseWeight`.
+                            Button {
+                                beginEditingWeight()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(weight > 0
+                                         ? String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight)
+                                         : "Bodyweight")
+                                        .font(.title3)
+                                        .bold()
+                                        .foregroundStyle(.blue)
+                                    Image(systemName: "pencil.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.blue.opacity(0.6))
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -1342,6 +1354,7 @@ struct SessionView: View {
                 Section {
                     HStack(spacing: 8) {
                         TextField("0", text: $weightEditText)
+                            .focused($isWeightEditFieldFocused)
 #if os(iOS)
                             .keyboardType(.decimalPad)
 #endif
@@ -1357,8 +1370,16 @@ struct SessionView: View {
             .navigationTitle("Adjust Weight")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
 #endif
             .toolbar {
+#if os(iOS)
+                // The decimal pad has no return key, so give it an explicit way to dismiss.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isWeightEditFieldFocused = false }
+                }
+#endif
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { showWeightEditor = false }
                 }

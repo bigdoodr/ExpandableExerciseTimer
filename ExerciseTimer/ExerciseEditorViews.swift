@@ -12,6 +12,18 @@ struct ExerciseListEditor: View {
             exerciseListSection
             addExerciseSection
         }
+#if os(iOS)
+        // The decimal pad has no return key, so give it an explicit way to dismiss — the
+        // keyboard toolbar lives here (not on each row's field) so only one Done button shows.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+            }
+        }
+#endif
     }
 
     private var exerciseListSection: some View {
@@ -22,8 +34,7 @@ struct ExerciseListEditor: View {
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         if index > 0 {
                             Button {
-                                exercises[index].isSupersetContinuation.toggle()
-                                exercises.normalizeSupersets()
+                                exercises.toggleSupersetLink(at: index)
                             } label: {
                                 Label(
                                     exercises[index].isSupersetContinuation ? kind.unlinkSupersetActionLabel : kind.supersetActionLabel,

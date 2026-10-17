@@ -134,7 +134,7 @@ struct WatchWorkoutView: View {
                     .foregroundStyle(.secondary)
                 
                 // Exercise count
-                Text("\(engine.kind.itemName) \(engine.displayExerciseNumber) of \(engine.exercises.count)")
+                Text("\(engine.displayExerciseNumber) of \(engine.exercises.count)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
@@ -150,21 +150,19 @@ struct WatchWorkoutView: View {
                 // Reps and weight share one line (e.g. "8–10 reps @ 50 LB"), matching the phone.
                 if let currentEx = engine.currentExercise {
                     HStack(spacing: 4) {
-                        if !currentEx.isTimeBased, let reps = currentEx.targetReps {
-                            Text(repsRangeText(reps: reps, repsMax: currentEx.targetRepsMax))
+                        if !currentEx.isTimeBased {
+                            // No target reps means as many reps as possible.
+                            Text(currentEx.targetReps.map { repsRangeText(reps: $0, repsMax: currentEx.targetRepsMax) } ?? "AMRAP")
                                 .font(.caption2)
                                 .foregroundStyle(.purple)
-                        }
-                        if let weight = currentEx.weight {
-                            if !currentEx.isTimeBased, currentEx.targetReps != nil {
-                                Text("@")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Text(formatWeight(weight, unit: currentEx.weightUnit))
+                            Text("@")
                                 .font(.caption2)
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(.secondary)
                         }
+                        // A missing or zero weight is bodyweight work.
+                        Text((currentEx.weight ?? 0) > 0 ? formatWeight(currentEx.weight ?? 0, unit: currentEx.weightUnit) : "Bodyweight")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
                     }
                 }
                 
@@ -198,15 +196,12 @@ struct WatchWorkoutView: View {
                         .bold()
                         .foregroundStyle(.blue)
                     
-                    Button(action: {
-                        WKInterfaceDevice.current().play(.click)
+                    // Press-and-hold rather than tap: a wrist-wrap glove (or a sleeve) brushing the
+                    // screen produces brief touches that would otherwise advance the workout.
+                    HoldToConfirmButton(title: engine.kind.watchManualButtonLabel, tint: .blue) {
+                        WKInterfaceDevice.current().play(.success)
                         connectivity.sendWorkoutCommand(.repsComplete)
-                    }) {
-                        Text(engine.kind.watchManualButtonLabel)
-                            .font(.caption)
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(.blue)
                 }
                 
                 if engine.isPaused && !engine.isCompleted {
@@ -784,6 +779,52 @@ struct WatchWorkoutView: View {
         case .healthData, .repsComplete, .skipPhase, .zoneSummary:
             break
         }
+    }
+}
+
+// MARK: - Hold To Confirm
+
+/// A button that only fires after being pressed and held, with a fill showing progress. Guards
+/// against accidental activation (e.g. a wrist-wrap glove brushing the screen) — releasing early
+/// cancels and resets the fill.
+private struct HoldToConfirmButton: View {
+    let title: String
+    let tint: Color
+    var holdDuration: TimeInterval = 1.0
+    let action: () -> Void
+
+    @State private var isHolding = false
+
+    var body: some View {
+        Text(isHolding ? "Keep holding…" : "Hold: \(title)")
+            .font(.caption)
+            .bold()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(alignment: .leading) {
+                // Fill grows left-to-right while held and snaps back on release.
+                GeometryReader { proxy in
+                    Rectangle()
+                        .fill(tint)
+                        .frame(width: isHolding ? proxy.size.width : 0)
+                }
+            }
+            .background(tint.opacity(0.25))
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+            .onLongPressGesture(minimumDuration: holdDuration, maximumDistance: 20) {
+                isHolding = false
+                action()
+            } onPressingChanged: { pressing in
+                if pressing {
+                    withAnimation(.linear(duration: holdDuration)) { isHolding = true }
+                } else {
+                    withAnimation(.easeOut(duration: 0.15)) { isHolding = false }
+                }
+            }
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }
 

@@ -117,18 +117,24 @@ extension Array where Element == Exercise {
 
     /// Enforces the superset invariants after any edit to an exercise list:
     /// - A superset marker on the first exercise means "linked to nothing" — not valid.
-    /// - An exercise immediately followed by a superset continuation has no rest of its own
-    ///   (rest lives on the chain's last exercise instead).
+    /// Rest durations on chain members are intentionally left alone — each member's own
+    /// `restDuration` is honored between linked exercises (0 means continue straight into the next).
     mutating func normalizeSupersets() {
         guard indices.contains(0) else { return }
         if self[0].isSupersetContinuation {
             self[0].isSupersetContinuation = false
         }
-        for index in indices {
-            let isAnchor = index + 1 < count && self[index + 1].isSupersetContinuation
-            if isAnchor && self[index].restDuration != 0 {
-                self[index].restDuration = 0
-            }
+    }
+
+    /// Toggles whether the exercise at `index` is linked to the previous one. Newly linking starts
+    /// the previous exercise at no rest (continue straight into this one) — the user can then add
+    /// a rest between them explicitly.
+    mutating func toggleSupersetLink(at index: Int) {
+        guard indices.contains(index), index > 0 else { return }
+        self[index].isSupersetContinuation.toggle()
+        if self[index].isSupersetContinuation {
+            self[index - 1].restDuration = 0
         }
+        normalizeSupersets()
     }
 }
