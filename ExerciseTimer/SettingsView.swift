@@ -17,6 +17,8 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+#if !os(macOS)
+                // Mac has no Health data, so heart rate zones don't apply there.
                 Section {
                     NavigationLink {
                         HeartRateZonesView(onSettingsChanged: onZoneSettingsChanged)
@@ -27,6 +29,7 @@ struct SettingsView: View {
                         }
                     }
                 }
+#endif
 #if canImport(UIKit)
                 Section(footer: Text("Prevents the display from sleeping while a session is active. This does not keep the app running in the background.")) {
                     Toggle(isOn: $keepScreenAwake) {

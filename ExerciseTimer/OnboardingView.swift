@@ -28,10 +28,22 @@ struct OnboardingView: View {
     }
 
     private static var fullSteps: [OnboardingStep] {
+        // On Mac there's no Health tracking, Apple Watch, or screen-lock behavior, and input is
+        // pointer-based — so wording and feature mentions differ from iPhone/iPad.
         #if os(macOS)
-        let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period — tap weight or target reps during a workout to adjust them on the fly."
-        let settingsDescription = "A sound plays when each exercise or rest period ends. Settings also has Heart Rate Zones, where you can review your zones and override them manually. Reopen this guide anytime from the Settings tab."
+        let welcomeDescription = "Build custom workouts from scratch or load saved routines on the Exercises tab, or switch to Timers for plain countdowns and prompts. This guide walks through everything you need to get started."
+        let buildDescription = "Click \"Add Exercise\" to create a new entry, then click the row to expand it and set the name, sets, and duration. Use the Exercise Type picker to switch between Time-Based (an automatic countdown) and Rep-Based (you mark each set complete manually), and click \"Add weight\" to log what you're lifting with the LB/KG toggle."
+        let supersetDescription = "Swipe an exercise right with two fingers on your trackpad (or right-click it) and choose \"Superset\" to link it with the exercise above, pairing moves back-to-back — even a mix of timed and rep-based — with an optional \"Rest Before Next Exercise\" between them. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper for rounds and a Time Budget you can scope \"Per Round\" (re-arms every round) or \"Whole Chain\" (one deadline shared across all rounds, ideal for an AMRAP-style MetCon)."
+        let routinesDescription = "Switch to the Routines tab to browse built-in programs like Athlean-X's Perfect PPL Split, organized into folders — or click \"Save as Routine…\" here to save your current list under a custom name and category. Click a saved routine to rename it or edit its exercises in place, right-click (or swipe) it to export it as a JSON file, or use Import to bring one back in. Saved routines can also be started hands-free with Siri or the Shortcuts app."
+        let settingsTitle = "Sound & Guide"
+        let settingsDescription = "A sound plays when each exercise or rest period ends. Reopen this guide anytime from the Settings tab."
+        let readyDescription = "Click \"Start Workout\" to begin. The timer guides you through each exercise and rest period — click weight or target reps during a workout to adjust them on the fly."
         #else
+        let welcomeDescription = "Build custom workouts from scratch or load saved routines on the Exercises tab, or switch to Timers for plain countdowns and prompts that don't need Health tracking. This guide walks through everything you need to get started."
+        let buildDescription = "Tap \"Add Exercise\" to create a new entry, then tap the row to expand it and set the name, sets, and duration. Use the Exercise Type picker to switch between Time-Based (an automatic countdown) and Rep-Based (you mark each set complete manually), and tap \"Add weight\" to log what you're lifting with the LB/KG toggle."
+        let supersetDescription = "Swipe an exercise right (or long-press it) and tap \"Superset\" to link it with the exercise above, pairing moves back-to-back — even a mix of timed and rep-based — with an optional \"Rest Before Next Exercise\" between them. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper for rounds and a Time Budget you can scope \"Per Round\" (re-arms every round) or \"Whole Chain\" (one deadline shared across all rounds, ideal for an AMRAP-style MetCon)."
+        let routinesDescription = "Switch to the Routines tab to browse built-in programs like Athlean-X's Perfect PPL Split, organized into folders — or tap \"Save as Routine…\" here to save your current list under a custom name and category. Tap a saved routine (or swipe it) to rename it or edit its exercises in place, swipe to export it as a JSON file, or use Import to bring one back in. Saved routines can also be started hands-free with Siri or the Shortcuts app."
+        let settingsTitle = "Sound & Settings"
         let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period — tap weight or target reps during a workout to adjust them on the fly. You can also start and control your workout from an Apple Watch, Skip button included."
         let settingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too, along with Heart Rate Zones, which shows the age Health provides (or explains why it can't) and lets you override your zones manually. Reopen this guide anytime from the Settings tab."
         #endif
@@ -41,30 +53,30 @@ struct OnboardingView: View {
                 symbol: "star.circle.fill",
                 color: .blue,
                 title: "Welcome to Exercise Timer",
-                description: "Build custom workouts from scratch or load saved routines on the Exercises tab, or switch to Timers for plain countdowns and prompts that don't need Health tracking. This guide walks through everything you need to get started."
+                description: welcomeDescription
             ),
             OnboardingStep(
                 symbol: "plus.circle.fill",
                 color: .green,
                 title: "Build Your Workout",
-                description: "Tap \"Add Exercise\" to create a new entry, then tap the row to expand it and set the name, sets, and duration. Use the Exercise Type picker to switch between Time-Based (an automatic countdown) and Rep-Based (you mark each set complete manually), and tap \"Add weight\" to log what you're lifting with the LB/KG toggle."
+                description: buildDescription
             ),
             OnboardingStep(
                 symbol: "link",
                 color: .pink,
                 title: "Supersets, Circuits & Timed Budgets",
-                description: "Swipe an exercise right (or long-press it) and tap \"Superset\" to link it with the exercise above, pairing moves back-to-back — even a mix of timed and rep-based — with an optional \"Rest Before Next Exercise\" between them. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper for rounds and a Time Budget you can scope \"Per Round\" (re-arms every round) or \"Whole Chain\" (one deadline shared across all rounds, ideal for an AMRAP-style MetCon)."
+                description: supersetDescription
             ),
             OnboardingStep(
                 symbol: "folder.fill",
                 color: .teal,
                 title: "Organize, Share & Launch Routines",
-                description: "Switch to the Routines tab to browse built-in programs like Athlean-X's Perfect PPL Split, organized into folders — or tap \"Save as Routine…\" here to save your current list under a custom name and category. Tap a saved routine (or swipe it) to rename it or edit its exercises in place, swipe to export it as a JSON file, or use Import to bring one back in. Saved routines can also be started hands-free with Siri or the Shortcuts app."
+                description: routinesDescription
             ),
             OnboardingStep(
                 symbol: "speaker.wave.2.fill",
                 color: .indigo,
-                title: "Sound & Settings",
+                title: settingsTitle,
                 description: settingsDescription
             ),
             OnboardingStep(
@@ -85,16 +97,23 @@ struct OnboardingView: View {
         let introDescription = "A lot has changed since version 2.0 — here's a look at everything new, from a dedicated Timers tab to Timed Supersets with a whole-chain budget and deeper Heart Rate Zone controls."
         #endif
 
-        #if os(macOS)
-        let zonesDescription = "Settings > Heart Rate Zones lists your five zones and lets you override them manually, the same way the Health app's own zone editor does."
-        #else
+        // Mac has no Health tracking, so the Heart Rate Zones step is iPhone/iPad only.
+        #if !os(macOS)
         let zonesDescription = "Settings > Heart Rate Zones shows the age Health provides for your estimate (or explains why it can't), lists the resulting five zones, and lets you override them manually. The app now defers to whatever zones you've set in Health, matching what you'd see there."
         #endif
 
         #if os(macOS)
-        let progressDescription = "Tap weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped."
+        let progressDescription = "Click weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped."
         #else
         let progressDescription = "Tap weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped, plus a \"Resting\" heart-rate tier pulled from Health."
+        #endif
+
+        #if os(macOS)
+        let tabsDescription = "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no weight or rep prompts — for anything that isn't a workout."
+        let foldersDescription = "Built-in programs and your saved routines now drill into folders from the Routines tab instead of a flat list. Click a saved routine — or right-click it and choose Edit or Export — to rename it or change its exercises without starting over, and start any saved routine hands-free with Siri or the Shortcuts app."
+        #else
+        let tabsDescription = "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
+        let foldersDescription = "Built-in programs and your saved routines now drill into folders from the Routines tab instead of a flat list. Tap a saved routine — or swipe it and tap Edit — to rename it or change its exercises without starting over, and start any saved routine hands-free with Siri or the Shortcuts app."
         #endif
 
         var steps: [OnboardingStep] = [
@@ -108,29 +127,31 @@ struct OnboardingView: View {
                 symbol: "square.grid.2x2.fill",
                 color: .green,
                 title: "Tabs, Plus a New Timers Tab",
-                description: "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
+                description: tabsDescription
             ),
             OnboardingStep(
                 symbol: "folder.fill",
                 color: .teal,
                 title: "Routine Folders & In-Place Editing",
-                description: "Built-in programs and your saved routines now drill into folders from the Routines tab instead of a flat list. Tap a saved routine — or swipe it and tap Edit — to rename it or change its exercises without starting over, and start any saved routine hands-free with Siri or the Shortcuts app."
+                description: foldersDescription
             ),
             OnboardingStep(
                 symbol: "link",
                 color: .pink,
                 title: "Timed Supersets Get a Whole-Chain Budget",
                 description: "A chain's first exercise can carry a shared Time Budget — choose \"Per Round\" to re-arm it every round, or the new \"Whole Chain\" option to run one deadline across every round, perfect for an AMRAP-style MetCon like 15 minutes for 10 rounds of burpees and goblet squats. Chains can also rest between individual exercises now, not just after the last one each round."
-            ),
+            )
+        ]
+
+        #if !os(macOS)
+        steps.append(
             OnboardingStep(
                 symbol: "heart.text.square.fill",
                 color: .red,
                 title: "Deeper Heart Rate Zone Controls",
                 description: zonesDescription
             )
-        ]
-
-        #if !os(macOS)
+        )
         steps.append(
             OnboardingStep(
                 symbol: "applewatch",

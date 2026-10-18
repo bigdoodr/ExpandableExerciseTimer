@@ -8,11 +8,9 @@ struct RoutinesView: View {
     let onLoad: (RoutineLoadRequest) -> Void
 
     @State private var editingRoutine: Routine?
+    @State private var exportingRoutine: Routine?
     @State private var showingImporter = false
-    @State private var showingExporter = false
-    @State private var exportDocument = RoutineDocument(routine: Routine(name: "", exercises: []))
     @State private var importError: String?
-    @State private var exportError: String?
 
     /// Series names in the order their routines first appear in `PreloadedRoutines.all`.
     private var seriesNames: [String] {
@@ -92,27 +90,17 @@ struct RoutinesView: View {
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
             importRoutine(result)
         }
-        .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: .json, defaultFilename: exportDocument.routine.name.isEmpty ? "routine" : exportDocument.routine.name) { result in
-            if case .failure(let error) = result {
-                exportError = error.localizedDescription
-            }
-        }
         .alert("Import Failed", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(importError ?? "")
         }
-        .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(exportError ?? "")
-        }
-        .sheet(item: $editingRoutine) { routine in
-            RoutineEditorView(routine: routine) { updated in
-                if let index = savedRoutines.firstIndex(where: { $0.id == updated.id }) {
-                    savedRoutines[index] = updated
-                }
-            }
+        .routineEditingAndExporting(editing: $editingRoutine, exporting: $exportingRoutine, onSave: saveEdited)
+    }
+
+    private func saveEdited(_ updated: Routine) {
+        if let index = savedRoutines.firstIndex(where: { $0.id == updated.id }) {
+            savedRoutines[index] = updated
         }
     }
 
@@ -147,14 +135,14 @@ struct RoutinesView: View {
                 if categories.isEmpty {
                     // Nobody has categorized anything in this group yet — flat list, as before.
                     ForEach(routines) { routine in
-                        SavedRoutineRow(routine: routine, onLoad: onLoad, onEdit: { editingRoutine = routine }, onExport: { export(routine) })
+                        SavedRoutineRow(routine: routine, onLoad: onLoad, onEdit: { editingRoutine = routine }, onExport: { exportingRoutine = routine })
                     }
                     .onDelete { indexSet in deleteRoutines(at: indexSet, from: routines) }
                 } else {
                     ForEach(categories, id: \.self) { category in
                         let inCategory = routines.filter { normalizedCategory($0) == category }
                         NavigationLink {
-                            SavedRoutineFolderView(title: category, routines: inCategory, onLoad: onLoad, editingRoutine: $editingRoutine, onExport: export, onDelete: deleteRoutines)
+                            SavedRoutineFolderView(title: category, routines: inCategory, onLoad: onLoad, onSave: saveEdited, onDelete: deleteRoutines)
                         } label: {
                             FolderRow(name: category, subtitle: nil, count: inCategory.count, color: .indigo)
                         }
@@ -162,7 +150,7 @@ struct RoutinesView: View {
                     let uncategorized = routines.filter { normalizedCategory($0) == nil }
                     if !uncategorized.isEmpty {
                         NavigationLink {
-                            SavedRoutineFolderView(title: "Uncategorized", routines: uncategorized, onLoad: onLoad, editingRoutine: $editingRoutine, onExport: export, onDelete: deleteRoutines)
+                            SavedRoutineFolderView(title: "Uncategorized", routines: uncategorized, onLoad: onLoad, onSave: saveEdited, onDelete: deleteRoutines)
                         } label: {
                             FolderRow(name: "Uncategorized", subtitle: nil, count: uncategorized.count, color: .gray)
                         }
@@ -180,14 +168,6 @@ struct RoutinesView: View {
     private func loadPreloaded(_ preloaded: PreloadedRoutine) {
         let routine = Routine(name: preloaded.name, exercises: preloaded.exercises, kind: .workout)
         onLoad(RoutineLoadRequest(routine: routine, isSavedRoutine: false, autoStart: false))
-    }
-
-    /// Snapshotted into `exportDocument` before presenting the exporter, so the document handed
-    /// to `.fileExporter` has a stable identity for the lifetime of the picker — building it
-    /// inline from a row's routine would recreate it on every re-render while the picker is open.
-    private func export(_ routine: Routine) {
-        exportDocument = RoutineDocument(routine: routine)
-        showingExporter = true
     }
 
     /// Accepts either a routine exported from this app, or a legacy plain `[Exercise]` array
@@ -411,14 +391,18 @@ private struct SavedRoutineFolderView: View {
     let title: String
     let routines: [Routine]
     let onLoad: (RoutineLoadRequest) -> Void
-    @Binding var editingRoutine: Routine?
-    let onExport: (Routine) -> Void
+    let onSave: (Routine) -> Void
     let onDelete: (IndexSet, [Routine]) -> Void
+
+    // Owned here rather than by `RoutinesView`: this view is pushed on top of it, and a sheet or
+    // file exporter attached to a covered ancestor doesn't present until you navigate back (macOS).
+    @State private var editingRoutine: Routine?
+    @State private var exportingRoutine: Routine?
 
     var body: some View {
         List {
             ForEach(routines) { routine in
-                SavedRoutineRow(routine: routine, onLoad: onLoad, onEdit: { editingRoutine = routine }, onExport: { onExport(routine) })
+                SavedRoutineRow(routine: routine, onLoad: onLoad, onEdit: { editingRoutine = routine }, onExport: { exportingRoutine = routine })
             }
             .onDelete { indexSet in onDelete(indexSet, routines) }
         }
@@ -426,6 +410,45 @@ private struct SavedRoutineFolderView: View {
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
 #endif
+        .routineEditingAndExporting(editing: $editingRoutine, exporting: $exportingRoutine, onSave: onSave)
+    }
+}
+
+/// Presents the routine editor sheet and JSON file exporter driven by two optional routines.
+/// Shared by every screen with Edit/Export actions so each presents from the view actually on screen.
+private struct RoutineEditingAndExporting: ViewModifier {
+    @Binding var editing: Routine?
+    @Binding var exporting: Routine?
+    let onSave: (Routine) -> Void
+    @State private var exportError: String?
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(item: $editing) { routine in
+                RoutineEditorView(routine: routine, onSave: onSave)
+            }
+            // The document is built from `exporting`, which stays fixed while the picker is open.
+            .fileExporter(
+                isPresented: Binding(get: { exporting != nil }, set: { if !$0 { exporting = nil } }),
+                document: RoutineDocument(routine: exporting ?? Routine(name: "", exercises: [])),
+                contentType: .json,
+                defaultFilename: exporting.map { $0.name.isEmpty ? "routine" : $0.name } ?? "routine"
+            ) { result in
+                if case .failure(let error) = result {
+                    exportError = error.localizedDescription
+                }
+            }
+            .alert("Export Failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(exportError ?? "")
+            }
+    }
+}
+
+private extension View {
+    func routineEditingAndExporting(editing: Binding<Routine?>, exporting: Binding<Routine?>, onSave: @escaping (Routine) -> Void) -> some View {
+        modifier(RoutineEditingAndExporting(editing: editing, exporting: exporting, onSave: onSave))
     }
 }
 
