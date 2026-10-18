@@ -240,6 +240,7 @@ struct RoutineEditorView: View {
                 }
                 ExerciseListEditor(exercises: $exercises, kind: routine.kind)
             }
+            .keyboardDoneButton()
 #if os(iOS)
             .listStyle(.insetGrouped)
 #else

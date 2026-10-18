@@ -120,6 +120,7 @@ struct SessionBuilderView: View {
 #endif
             startSection
         }
+        .keyboardDoneButton()
 #if os(iOS)
         .listStyle(.insetGrouped)
         // Default List behavior dismisses the keyboard on any scroll, which competes with

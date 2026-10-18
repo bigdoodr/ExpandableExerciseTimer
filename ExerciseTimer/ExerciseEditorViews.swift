@@ -12,18 +12,6 @@ struct ExerciseListEditor: View {
             exerciseListSection
             addExerciseSection
         }
-#if os(iOS)
-        // The decimal pad has no return key, so give it an explicit way to dismiss — the
-        // keyboard toolbar lives here (not on each row's field) so only one Done button shows.
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                }
-            }
-        }
-#endif
     }
 
     private var exerciseListSection: some View {
@@ -424,6 +412,27 @@ struct ExerciseEntryView: View {
             }
         }
         .padding(.horizontal)
+    }
+}
+
+extension View {
+    /// Adds a single "Done" button above the keyboard that dismisses whichever field is active.
+    /// Apply once to the enclosing `List`/`Form` — NOT inside a view that expands into several
+    /// list rows (like `ExerciseListEditor`), or every row registers its own copy of the button.
+    @ViewBuilder
+    func keyboardDoneButton() -> some View {
+#if os(iOS)
+        toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+            }
+        }
+#else
+        self
+#endif
     }
 }
 
