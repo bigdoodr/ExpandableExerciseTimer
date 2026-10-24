@@ -1,5 +1,38 @@
 import SwiftUI
 
+/// A marketing version plus build number, ordered so What's New can show only newer slides.
+/// Build numbers reset with each marketing version, so both parts are compared.
+struct AppRelease: Comparable, Equatable {
+    let version: [Int]
+    let build: Int
+
+    /// The App Store release that all What's New content is measured against.
+    static let baseline = AppRelease(version: [2, 0], build: 0)
+
+    init(version: [Int], build: Int) {
+        self.version = version
+        self.build = build
+    }
+
+    init(versionString: String, build: Int) {
+        self.init(version: versionString.split(separator: ".").compactMap { Int($0) }, build: build)
+    }
+
+    static func < (lhs: AppRelease, rhs: AppRelease) -> Bool {
+        let count = max(lhs.version.count, rhs.version.count)
+        for index in 0..<count {
+            let l = index < lhs.version.count ? lhs.version[index] : 0
+            let r = index < rhs.version.count ? rhs.version[index] : 0
+            if l != r { return l < r }
+        }
+        return lhs.build < rhs.build
+    }
+
+    static func == (lhs: AppRelease, rhs: AppRelease) -> Bool {
+        !(lhs < rhs) && !(rhs < lhs)
+    }
+}
+
 private struct OnboardingStep {
     let symbol: String
     let color: Color
@@ -17,35 +50,37 @@ struct OnboardingView: View {
 
     var mode: Mode = .full
 
+    /// Only used for `.whatsNew`: slides introduced after this release are shown.
+    var lastSeen: AppRelease = .baseline
+
     @Environment(\.dismiss) private var dismiss
     @State private var currentPage = 0
 
     private var steps: [OnboardingStep] {
         switch mode {
         case .full: return Self.fullSteps
-        case .whatsNew: return Self.whatsNewSteps
+        case .whatsNew: return Self.whatsNewSteps(since: lastSeen)
         }
+    }
+
+    /// True when at least one What's New slide was introduced after `release`.
+    static func hasWhatsNew(since release: AppRelease) -> Bool {
+        !whatsNewItems.filter { $0.introducedIn > release }.isEmpty
     }
 
     private static var fullSteps: [OnboardingStep] {
         // On Mac there's no Health tracking, Apple Watch, or screen-lock behavior, and input is
         // pointer-based — so wording and feature mentions differ from iPhone/iPad.
         #if os(macOS)
-        let welcomeDescription = "Build custom workouts from scratch or load saved routines on the Exercises tab, or switch to Timers for plain countdowns and prompts. This guide walks through everything you need to get started."
-        let buildDescription = "Click \"Add Exercise\" to create a new entry, then click the row to expand it and set the name, sets, and duration. Use the Exercise Type picker to switch between Time-Based (an automatic countdown) and Rep-Based (you mark each set complete manually), and click \"Add weight\" to log what you're lifting with the LB/KG toggle."
-        let supersetDescription = "Swipe an exercise right with two fingers on your trackpad (or right-click it) and choose \"Superset\" to link it with the exercise above, pairing moves back-to-back — even a mix of timed and rep-based — with an optional \"Rest Before Next Exercise\" between them. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper for rounds and a Time Budget you can scope \"Per Round\" (re-arms every round) or \"Whole Chain\" (one deadline shared across all rounds, ideal for an AMRAP-style MetCon)."
-        let routinesDescription = "Switch to the Routines tab to browse built-in programs like Athlean-X's Perfect PPL Split, organized into folders — or click \"Save as Routine…\" here to save your current list under a custom name and category. Click a saved routine to rename it or edit its exercises in place, right-click (or swipe) it to export it as a JSON file, or use Import to bring one back in. Saved routines can also be started hands-free with Siri or the Shortcuts app."
-        let settingsTitle = "Sound & Guide"
-        let settingsDescription = "A sound plays when each exercise or rest period ends. Reopen this guide anytime from the Settings tab."
-        let readyDescription = "Click \"Start Workout\" to begin. The timer guides you through each exercise and rest period — click weight or target reps during a workout to adjust them on the fly."
+        let welcomeDescription = "Two tabs, two purposes. Use Exercises for strength-style workouts with weight and target reps. Use Timers for plain countdowns and prompts."
+        let buildDescription = "Click \"Add Exercise\", then click the row to set the name, sets, and duration. Choose Time-Based (automatic countdown) or Rep-Based (you mark each set complete), and optionally add weight. Right-click an exercise and choose \"Superset\" to chain it with the one above."
+        let routinesDescription = "The Routines tab holds built-in programs and your saved routines, organized in folders. Click \"Save as Routine…\" to keep your list, click a saved routine to edit it, or right-click it to export. Siri and Shortcuts can start saved routines hands-free."
+        let readyDescription = "Click \"Start Workout\" to begin — click weight or target reps during a workout to adjust them on the fly. A sound plays when each exercise or rest ends. Reopen this guide anytime from the Settings tab."
         #else
-        let welcomeDescription = "Build custom workouts from scratch or load saved routines on the Exercises tab, or switch to Timers for plain countdowns and prompts that don't need Health tracking. This guide walks through everything you need to get started."
-        let buildDescription = "Tap \"Add Exercise\" to create a new entry, then tap the row to expand it and set the name, sets, and duration. Use the Exercise Type picker to switch between Time-Based (an automatic countdown) and Rep-Based (you mark each set complete manually), and tap \"Add weight\" to log what you're lifting with the LB/KG toggle."
-        let supersetDescription = "Swipe an exercise right (or long-press it) and tap \"Superset\" to link it with the exercise above, pairing moves back-to-back — even a mix of timed and rep-based — with an optional \"Rest Before Next Exercise\" between them. Linked exercises share one round counter: the first shows a \"Repeat Chain\" stepper for rounds and a Time Budget you can scope \"Per Round\" (re-arms every round) or \"Whole Chain\" (one deadline shared across all rounds, ideal for an AMRAP-style MetCon)."
-        let routinesDescription = "Switch to the Routines tab to browse built-in programs like Athlean-X's Perfect PPL Split, organized into folders — or tap \"Save as Routine…\" here to save your current list under a custom name and category. Tap a saved routine (or swipe it) to rename it or edit its exercises in place, swipe to export it as a JSON file, or use Import to bring one back in. Saved routines can also be started hands-free with Siri or the Shortcuts app."
-        let settingsTitle = "Sound & Settings"
-        let readyDescription = "Tap \"Start Workout\" to begin. The timer guides you through each exercise and rest period — tap weight or target reps during a workout to adjust them on the fly. You can also start and control your workout from an Apple Watch, Skip button included."
-        let settingsDescription = "A sound plays when each exercise or rest period ends. Turn on Background Audio in Settings to keep that cue — and any music or podcast you're playing — going when your screen locks or you switch apps. Keep Screen Awake lives there too, along with Heart Rate Zones, which shows the age Health provides (or explains why it can't) and lets you override your zones manually. Reopen this guide anytime from the Settings tab."
+        let welcomeDescription = "Two tabs, two purposes. Exercises is for workouts — it tracks weight and reps and sends your stats to the Health app. Timers is for non-exercise activities like stretching, cooking, or study intervals — plain countdowns and prompts, never recorded to Health."
+        let buildDescription = "Tap \"Add Exercise\", then tap the row to set the name, sets, and duration. Choose Time-Based (automatic countdown) or Rep-Based (you mark each set complete), and optionally add weight. Swipe an exercise right (or long-press it) and tap \"Superset\" to chain it with the one above."
+        let routinesDescription = "The Routines tab holds built-in programs and your saved routines, organized in folders. Tap \"Save as Routine…\" to keep your list, tap a saved routine to edit it, or swipe it to export. Siri and Shortcuts can start saved routines hands-free."
+        let readyDescription = "Tap \"Start Workout\" to begin — tap weight or target reps during a workout to adjust them on the fly. Run it from your Apple Watch too: press and hold \"Reps Complete\" to confirm a set. Background Audio, Keep Screen Awake, and Heart Rate Zones live in Settings, where you can reopen this guide anytime."
         #endif
 
         return [
@@ -58,26 +93,14 @@ struct OnboardingView: View {
             OnboardingStep(
                 symbol: "plus.circle.fill",
                 color: .green,
-                title: "Build Your Workout",
+                title: "Build & Link Exercises",
                 description: buildDescription
-            ),
-            OnboardingStep(
-                symbol: "link",
-                color: .pink,
-                title: "Supersets, Circuits & Timed Budgets",
-                description: supersetDescription
             ),
             OnboardingStep(
                 symbol: "folder.fill",
                 color: .teal,
-                title: "Organize, Share & Launch Routines",
+                title: "Save, Share & Launch Routines",
                 description: routinesDescription
-            ),
-            OnboardingStep(
-                symbol: "speaker.wave.2.fill",
-                color: .indigo,
-                title: settingsTitle,
-                description: settingsDescription
             ),
             OnboardingStep(
                 symbol: "play.circle.fill",
@@ -88,90 +111,105 @@ struct OnboardingView: View {
         ]
     }
 
-    private static var whatsNewSteps: [OnboardingStep] {
-        // The Apple Watch Skip button/persisted-settings step depends on WatchConnectivity,
-        // which doesn't exist on macOS — so that step doesn't apply there.
-        #if os(macOS)
-        let introDescription = "A lot has changed since version 2.0 — here's a look at everything new, from a dedicated Timers tab to Timed Supersets with a whole-chain budget."
-        #else
-        let introDescription = "A lot has changed since version 2.0 — here's a look at everything new, from a dedicated Timers tab to Timed Supersets with a whole-chain budget and deeper Heart Rate Zone controls."
-        #endif
+    /// One What's New slide plus the release that introduced it, so returning users only see
+    /// what changed since the last release they saw.
+    private struct WhatsNewItem {
+        let introducedIn: AppRelease
+        let step: OnboardingStep
+    }
 
-        // Mac has no Health tracking, so the Heart Rate Zones step is iPhone/iPad only.
-        #if !os(macOS)
-        let zonesDescription = "Settings > Heart Rate Zones shows the age Health provides for your estimate (or explains why it can't), lists the resulting five zones, and lets you override them manually. The app now defers to whatever zones you've set in Health, matching what you'd see there."
-        #endif
-
+    /// Add new slides to the end, tagged with the version/build that introduces them. Everything
+    /// here is newer than the App Store's 2.0 baseline.
+    private static var whatsNewItems: [WhatsNewItem] {
         #if os(macOS)
+        let tabsDescription = "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no weight or rep prompts — for anything that isn't a workout."
+        let foldersDescription = "Built-in programs and your saved routines now drill into folders from the Routines tab. Click a saved routine — or right-click it and choose Edit or Export — to rename it or change its exercises without starting over."
         let progressDescription = "Click weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped."
         #else
+        let tabsDescription = "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
+        let foldersDescription = "Built-in programs and your saved routines now drill into folders from the Routines tab. Tap a saved routine — or swipe it and tap Edit — to rename it or change its exercises without starting over."
         let progressDescription = "Tap weight or target reps during a workout to adjust them on the fly — edits save back to the routine too. Recaps now break down Active vs. Rest time and any exercises or rests you skipped, plus a \"Resting\" heart-rate tier pulled from Health."
         #endif
 
-        #if os(macOS)
-        let tabsDescription = "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no weight or rep prompts — for anything that isn't a workout."
-        let foldersDescription = "Built-in programs and your saved routines now drill into folders from the Routines tab instead of a flat list. Click a saved routine — or right-click it and choose Edit or Export — to rename it or change its exercises without starting over, and start any saved routine hands-free with Siri or the Shortcuts app."
-        #else
-        let tabsDescription = "Exercises, Timers, Routines, and Settings are now tabs instead of toolbar buttons and sheets. The Timers tab runs plain countdown or prompt-based timers — no Health tracking, no weight or rep prompts — for anything that isn't a workout."
-        let foldersDescription = "Built-in programs and your saved routines now drill into folders from the Routines tab instead of a flat list. Tap a saved routine — or swipe it and tap Edit — to rename it or change its exercises without starting over, and start any saved routine hands-free with Siri or the Shortcuts app."
-        #endif
-
-        var steps: [OnboardingStep] = [
-            OnboardingStep(
-                symbol: "sparkles",
-                color: .blue,
-                title: "What's New in 2.3",
-                description: introDescription
+        var items: [WhatsNewItem] = [
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [2, 1], build: 1),
+                step: OnboardingStep(
+                    symbol: "dumbbell.fill",
+                    color: .purple,
+                    title: "Mid-Session Edits & Deeper Recaps",
+                    description: progressDescription
+                )
             ),
-            OnboardingStep(
-                symbol: "square.grid.2x2.fill",
-                color: .green,
-                title: "Tabs, Plus a New Timers Tab",
-                description: tabsDescription
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [2, 2], build: 1),
+                step: OnboardingStep(
+                    symbol: "square.grid.2x2.fill",
+                    color: .green,
+                    title: "Tabs, Plus a New Timers Tab",
+                    description: tabsDescription
+                )
             ),
-            OnboardingStep(
-                symbol: "folder.fill",
-                color: .teal,
-                title: "Routine Folders & In-Place Editing",
-                description: foldersDescription
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [2, 2], build: 1),
+                step: OnboardingStep(
+                    symbol: "folder.fill",
+                    color: .teal,
+                    title: "Routine Folders & In-Place Editing",
+                    description: foldersDescription
+                )
             ),
-            OnboardingStep(
-                symbol: "link",
-                color: .pink,
-                title: "Timed Supersets Get a Whole-Chain Budget",
-                description: "A chain's first exercise can carry a shared Time Budget — choose \"Per Round\" to re-arm it every round, or the new \"Whole Chain\" option to run one deadline across every round, perfect for an AMRAP-style MetCon like 15 minutes for 10 rounds of burpees and goblet squats. Chains can also rest between individual exercises now, not just after the last one each round."
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [2, 3], build: 1),
+                step: OnboardingStep(
+                    symbol: "link",
+                    color: .pink,
+                    title: "Timed Supersets Get a Whole-Chain Budget",
+                    description: "A chain's first exercise can carry a shared Time Budget — choose \"Per Round\" to re-arm it every round, or the new \"Whole Chain\" option to run one deadline across every round, perfect for an AMRAP-style MetCon like 15 minutes for 10 rounds of burpees and goblet squats. Chains can also rest between individual exercises now, not just after the last one each round."
+                )
             )
         ]
 
+        // Mac has no Health tracking or Apple Watch, so these two are iPhone/iPad only.
         #if !os(macOS)
-        steps.append(
-            OnboardingStep(
-                symbol: "heart.text.square.fill",
-                color: .red,
-                title: "Deeper Heart Rate Zone Controls",
-                description: zonesDescription
+        items.append(
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [2, 1], build: 1),
+                step: OnboardingStep(
+                    symbol: "heart.text.square.fill",
+                    color: .red,
+                    title: "Deeper Heart Rate Zone Controls",
+                    description: "Settings > Heart Rate Zones shows the age Health provides for your estimate (or explains why it can't), lists the resulting five zones, and lets you override them manually. The app now defers to whatever zones you've set in Health, matching what you'd see there."
+                )
             )
         )
-        steps.append(
-            OnboardingStep(
-                symbol: "applewatch",
-                color: .indigo,
-                title: "Apple Watch Gets a Skip Button",
-                description: "The Watch now has its own Skip button to match iPhone's, and Keep Screen Awake / Background Audio settings in Settings stick between launches instead of resetting."
+        items.append(
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [2, 3], build: 3),
+                step: OnboardingStep(
+                    symbol: "applewatch",
+                    color: .indigo,
+                    title: "Hold to Confirm on Apple Watch",
+                    description: "\"Reps Complete\" on the Watch now needs a press-and-hold, so a stray tap from a wrist-wrapped glove or sweaty wrist can't skip your set."
+                )
             )
         )
         #endif
 
-        steps.append(
-            OnboardingStep(
-                symbol: "dumbbell.fill",
-                color: .purple,
-                title: "Mid-Session Edits & Deeper Recaps",
-                description: progressDescription
-            )
-        )
+        return items.sorted { $0.introducedIn < $1.introducedIn }
+    }
 
-        return steps
+    private static func whatsNewSteps(since release: AppRelease) -> [OnboardingStep] {
+        let newItems = whatsNewItems.filter { $0.introducedIn > release }
+        let intro = OnboardingStep(
+            symbol: "sparkles",
+            color: .blue,
+            title: "What's New",
+            description: release == .baseline
+                ? "A lot has changed since version 2.0 — here's a look at everything new."
+                : "Here's what's changed since the last version you used."
+        )
+        return [intro] + newItems.map(\.step)
     }
 
     var body: some View {

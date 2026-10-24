@@ -33,6 +33,7 @@ struct RootTabView: View {
 
     @State private var showOnboarding = false
     @State private var onboardingMode: OnboardingView.Mode = .full
+    @State private var onboardingLastSeen: AppRelease = .baseline
 
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
@@ -47,6 +48,7 @@ struct RootTabView: View {
     private let pendingRoutineKey = "pendingRoutineStart"
     private let hasSeenOnboardingKey = "hasSeenOnboarding"
     private let lastSeenAppVersionKey = "lastSeenAppVersion"
+    private let lastSeenAppBuildKey = "lastSeenAppBuild"
 
     /// True when HealthKit is available but age couldn't be read from it — always false on
     /// platforms/configurations without HealthKit (e.g. macOS), where there's nothing to warn about.
@@ -58,8 +60,20 @@ struct RootTabView: View {
 #endif
     }
 
-    private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+    private var currentRelease: AppRelease {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? ""
+        let build = Int(info?["CFBundleVersion"] as? String ?? "") ?? 0
+        return AppRelease(versionString: version, build: build)
+    }
+
+    /// The last release whose guide was dismissed. Installs from before build tracking only stored
+    /// a version string, so those are treated as build 1 of that version.
+    private var lastSeenRelease: AppRelease {
+        let defaults = UserDefaults.standard
+        guard let version = defaults.string(forKey: lastSeenAppVersionKey) else { return .baseline }
+        let build = defaults.object(forKey: lastSeenAppBuildKey) as? Int ?? 1
+        return AppRelease(versionString: version, build: build)
     }
 
     var body: some View {
@@ -116,7 +130,7 @@ struct RootTabView: View {
         .sheet(isPresented: $showOnboarding, onDismiss: {
             markOnboardingSeen()
         }) {
-            OnboardingView(mode: onboardingMode)
+            OnboardingView(mode: onboardingMode, lastSeen: onboardingLastSeen)
         }
     }
 
@@ -138,16 +152,25 @@ struct RootTabView: View {
             showOnboarding = true
             return
         }
-        if defaults.string(forKey: lastSeenAppVersionKey) != currentAppVersion {
+        // Only show What's New when something user-facing landed since the last release seen;
+        // otherwise just record the new build so a silent update isn't revisited.
+        let lastSeen = lastSeenRelease
+        guard currentRelease != lastSeen else { return }
+        if OnboardingView.hasWhatsNew(since: lastSeen) {
+            onboardingLastSeen = lastSeen
             onboardingMode = .whatsNew
             showOnboarding = true
+        } else {
+            markOnboardingSeen()
         }
     }
 
     private func markOnboardingSeen() {
         let defaults = UserDefaults.standard
         defaults.set(true, forKey: hasSeenOnboardingKey)
-        defaults.set(currentAppVersion, forKey: lastSeenAppVersionKey)
+        let release = currentRelease
+        defaults.set(release.version.map(String.init).joined(separator: "."), forKey: lastSeenAppVersionKey)
+        defaults.set(release.build, forKey: lastSeenAppBuildKey)
     }
 
     private func loadSavedRoutines() {
