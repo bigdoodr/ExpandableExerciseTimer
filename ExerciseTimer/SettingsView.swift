@@ -13,6 +13,8 @@ struct SettingsView: View {
     /// Forwarded to `HeartRateZonesView` so a manual-zone edit can re-push the exercise list (and
     /// the now-updated zone settings it's bundled with) to the watch.
     var onZoneSettingsChanged: () -> Void = {}
+    @State private var showClearHistoryConfirm = false
+    @State private var historyCount = WorkoutHistoryStore.shared.workouts.count
 
     var body: some View {
         NavigationStack {
@@ -51,6 +53,21 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                 }
 #endif
+                Section(footer: Text("Logged sets power \"Last time\" and progression suggestions. Stored only on this device.")) {
+                    LabeledContent("Workouts Logged", value: "\(historyCount)")
+                    Button("Clear Workout History", role: .destructive) { showClearHistoryConfirm = true }
+                        .disabled(historyCount == 0)
+                }
+                .confirmationDialog("Clear all logged workouts?", isPresented: $showClearHistoryConfirm, titleVisibility: .visible) {
+                    Button("Clear History", role: .destructive) {
+                        WorkoutHistoryStore.shared.deleteAll()
+                        historyCount = 0
+                    }
+                } message: {
+                    Text("This removes every logged set. Saved routines aren't affected. This can't be undone.")
+                }
+                .onAppear { historyCount = WorkoutHistoryStore.shared.workouts.count }
+
                 Section {
                     Button {
                         onShowOnboarding()

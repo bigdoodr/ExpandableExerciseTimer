@@ -139,11 +139,11 @@ struct WatchWorkoutView: View {
                     .foregroundStyle(.secondary)
 
                 // Exercise info
-                Text(currentExerciseName)
+                Text(engine.currentExerciseName)
                     .font(.headline)
                     .lineLimit(2)
                 
-                Text(isCurrentGroupSuperset ? "Round \(engine.currentSet) of \(currentGroupRoundCount)" : "\(engine.kind.setUnitSingular) \(engine.currentSet) of \(engine.currentExercise?.sets ?? 1)")
+                Text(engine.progressLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
@@ -182,7 +182,7 @@ struct WatchWorkoutView: View {
                     Text(engine.formatTime(engine.timeRemaining))
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .monospacedDigit()
-                } else if engine.currentExercise?.isTimeBased == true {
+                } else if engine.phaseStyle == .timedWork {
                     Text(engine.kind.activePhaseLabel)
                         .font(.title3)
                         .bold()
@@ -204,6 +204,13 @@ struct WatchWorkoutView: View {
                     }
                 }
                 
+                // Timed Superset budget, same wording as the phone.
+                if let budget = engine.windowTimeRemaining, !engine.isCompleted {
+                    Label(engine.formatTime(budget) + " left", systemImage: "timer")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 if engine.isPaused && !engine.isCompleted {
                     Text("PAUSED")
                         .font(.caption)
@@ -528,25 +535,6 @@ struct WatchWorkoutView: View {
         return heartRateReadings.reduce(0, +) / Double(heartRateReadings.count)
     }
 
-    private var currentExerciseName: String {
-        guard let exercise = engine.currentExercise else { return engine.kind.itemName }
-        return exercise.name.isEmpty ? "\(engine.kind.itemName) \(engine.displayExerciseNumber)" : exercise.name
-    }
-
-    private var currentGroupRange: ClosedRange<Int> {
-        guard !engine.exercises.isEmpty else { return 0...0 }
-        let safeIndex = min(max(0, engine.currentExerciseIndex), engine.exercises.count - 1)
-        return engine.exercises.supersetGroupRange(containing: safeIndex)
-    }
-
-    private var isCurrentGroupSuperset: Bool {
-        currentGroupRange.count > 1
-    }
-
-    private var currentGroupRoundCount: Int {
-        engine.exercises.roundCount(for: currentGroupRange)
-    }
-
     private func hrZoneColor(_ zone: Int) -> Color {
         switch zone {
         case 1: return .blue
@@ -583,7 +571,7 @@ struct WatchWorkoutView: View {
         currentWorkoutID = workoutID
 
         connectivity.sendWorkoutCommand(.start(exercises: exercises, kind: kind, healthKitEnabled: hkEnabled, activityType: actType, workoutID: workoutID))
-        engine.startWorkout(exercises: exercises, kind: kind, healthKitEnabled: hkEnabled, activityType: actType)
+        engine.startWorkout(exercises: exercises, kind: kind, healthKitEnabled: hkEnabled, activityType: actType, workoutID: workoutID)
         workoutStartDate = Date()
         sessionElapsed = 0
         
@@ -601,28 +589,7 @@ struct WatchWorkoutView: View {
     }
     
     private func endWorkoutWithRecap(completedNaturally: Bool) {
-        let duration = Date().timeIntervalSince(workoutStartDate)
-        let exercisesCompleted: Int
-        if completedNaturally {
-            exercisesCompleted = engine.exercises.count
-        } else {
-            exercisesCompleted = min(engine.currentExerciseIndex + 1, engine.exercises.count)
-        }
-        let setsCompleted = computeSetsCompleted(completedNaturally: completedNaturally)
-        let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
-        
-        recapData = WorkoutRecap(
-            kind: engine.kind,
-            duration: duration,
-            exercisesCompleted: exercisesCompleted,
-            totalExercises: engine.exercises.count,
-            setsCompleted: setsCompleted,
-            totalSets: totalSets,
-            heartRate: averageHeartRate,
-            calories: healthKit.activeCalories,
-            completedNaturally: completedNaturally
-        )
-        
+        recapData = makeRecap(completedNaturally: completedNaturally)
         engine.stopWorkout()
         connectivity.sendWorkoutCommand(.stop)
         Task {
@@ -637,24 +604,27 @@ struct WatchWorkoutView: View {
         showRecap = true
     }
 
+    /// Counts come from the iPhone's set log (via `SessionSync`), so supersets are counted right.
+    private func makeRecap(completedNaturally: Bool) -> WorkoutRecap {
+        WorkoutRecap(
+            kind: engine.kind,
+            duration: Date().timeIntervalSince(workoutStartDate),
+            exercisesCompleted: engine.exercisesPerformed,
+            totalExercises: engine.exercises.count,
+            setsCompleted: engine.setsCompleted,
+            totalSets: engine.totalSets,
+            heartRate: averageHeartRate,
+            calories: healthKit.activeCalories,
+            completedNaturally: completedNaturally
+        )
+    }
+
     private func dismissRecap() {
         showRecap = false
         recapData = nil
         engine.isWorkoutRunning = false
         heartRateReadings = []
         sessionElapsed = 0
-    }
-    
-    private func computeSetsCompleted(completedNaturally: Bool) -> Int {
-        if completedNaturally {
-            return engine.exercises.reduce(0) { $0 + $1.sets }
-        }
-        var total = 0
-        for i in 0..<engine.currentExerciseIndex {
-            total += engine.exercises[i].sets
-        }
-        total += max(0, engine.currentSet - (engine.isResting ? 0 : 1))
-        return total
     }
     
     // MARK: - Command Handling
@@ -669,7 +639,7 @@ struct WatchWorkoutView: View {
             recapData = nil
             heartRateReadings = []
             currentWorkoutID = workoutID
-            engine.startWorkout(exercises: exerciseList, kind: kind, healthKitEnabled: hkEnabled, activityType: actType)
+            engine.startWorkout(exercises: exerciseList, kind: kind, healthKitEnabled: hkEnabled, activityType: actType, workoutID: workoutID)
             workoutStartDate = Date()
             sessionElapsed = 0
             
@@ -685,38 +655,31 @@ struct WatchWorkoutView: View {
                 }
             }
             
-        case .updatePhase(let exerciseIndex, let set, let resting, let paused, let endDate, let completed):
-            engine.applyUpdate(
-                exerciseIndex: exerciseIndex, set: set, isResting: resting,
-                isPaused: paused, phaseEndDate: endDate, isCompleted: completed
-            )
-            if completed {
+        case .sync(let sync):
+            // Already ended here (e.g. End was pressed on the watch): the iPhone's final state is old news.
+            if showRecap && sync.workoutID == currentWorkoutID { break }
+            let wasRunning = engine.isWorkoutRunning
+            if engine.apply(sync) {
+                // The iPhone finished (or ended) the workout. Show the recap right away so the
+                // `.stop` that follows is recognised as already handled.
+                recapData = makeRecap(completedNaturally: !sync.state.endedEarly)
+                recapCreatedAt = Date()
+                showRecap = true
                 Task {
                     await healthKit.endWorkout()
                     let zones = healthKit.zoneRecapEntries()
                     if !zones.isEmpty {
                         connectivity.sendWorkoutCommand(.zoneSummary(zones: zones, workoutID: currentWorkoutID))
                     }
-                    let duration = Date().timeIntervalSince(workoutStartDate)
-                    let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
-                    await MainActor.run {
-                        recapData = WorkoutRecap(
-                            kind: engine.kind,
-                            duration: duration,
-                            exercisesCompleted: engine.exercises.count,
-                            totalExercises: engine.exercises.count,
-                            setsCompleted: totalSets,
-                            totalSets: totalSets,
-                            heartRate: averageHeartRate,
-                            calories: healthKit.activeCalories,
-                            completedNaturally: true
-                        )
-                        recapCreatedAt = Date()
-                        showRecap = true
-                    }
                 }
+            } else if !wasRunning && engine.isWorkoutRunning {
+                // Adopted a live session whose .start we missed (watch app opened late).
+                showRecap = false
+                recapData = nil
+                currentWorkoutID = sync.workoutID
+                workoutStartDate = sync.state.startedAt
             }
-            
+
         case .pause:
             engine.isPaused = true
             if healthKit.isWorkoutActive { healthKit.pauseWorkout() }
@@ -726,21 +689,8 @@ struct WatchWorkoutView: View {
             if healthKit.isWorkoutActive { healthKit.resumeWorkout() }
             
         case .stop:
-            let duration = Date().timeIntervalSince(workoutStartDate)
-            let exercisesCompleted = min(engine.currentExerciseIndex + 1, engine.exercises.count)
-            let setsCompleted = computeSetsCompleted(completedNaturally: false)
-            let totalSets = engine.exercises.reduce(0) { $0 + $1.sets }
-            recapData = WorkoutRecap(
-                kind: engine.kind,
-                duration: duration,
-                exercisesCompleted: exercisesCompleted,
-                totalExercises: engine.exercises.count,
-                setsCompleted: setsCompleted,
-                totalSets: totalSets,
-                heartRate: averageHeartRate,
-                calories: healthKit.activeCalories,
-                completedNaturally: false
-            )
+            guard !showRecap else { break }
+            recapData = makeRecap(completedNaturally: false)
             engine.stopWorkout()
             Task {
                 await healthKit.endWorkout()
@@ -770,13 +720,7 @@ struct WatchWorkoutView: View {
                 }
             }
 
-        case .updateWeight(let exerciseIndex, let weight, let weightUnit):
-            engine.applyWeightUpdate(exerciseIndex: exerciseIndex, weight: weight, weightUnit: weightUnit)
-
-        case .updateTargetReps(let exerciseIndex, let reps, let repsMax):
-            engine.applyTargetRepsUpdate(exerciseIndex: exerciseIndex, reps: reps, repsMax: repsMax)
-
-        case .healthData, .repsComplete, .skipPhase, .zoneSummary:
+        case .healthData, .repsComplete, .skipPhase, .zoneSummary, .undo:
             break
         }
     }

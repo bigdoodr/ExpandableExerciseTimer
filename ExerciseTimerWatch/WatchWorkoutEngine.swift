@@ -2,190 +2,127 @@ import Foundation
 import WatchKit
 internal import Combine
 
-/// Display state container for the watch workout UI.
-/// The iPhone is always the timer authority — this engine only mirrors
-/// state received via `.updatePhase` commands and updates the display timer.
+/// Display state for the watch workout UI.
+///
+/// The iPhone is the timer authority. It sends a full `SessionSync` (exercise list + engine state)
+/// on every change; the watch rebuilds the same `SessionEngine` from it, so every label here —
+/// round, rest, Up Next, Timed Superset time left — comes from the exact same code the iPhone
+/// uses. (Previously the watch re-derived Up Next on its own from an index and a few flags, and
+/// got supersets with in-chain rests wrong.)
 @MainActor
 final class WatchWorkoutEngine: ObservableObject {
-    
+
+    @Published private(set) var mirror: SessionEngine?
     @Published var exercises: [Exercise] = []
     @Published var kind: SessionKind = .workout
-    @Published var currentExerciseIndex = 0
-    @Published var currentSet = 1
-    @Published var isResting = false
+    /// Optimistic local pause flag (the iPhone's next sync confirms or corrects it).
     @Published var isPaused = false
-    @Published var isCompleted = false
     @Published var isWorkoutRunning = false
-    @Published var phaseEndDate: Date?
     @Published var timeRemaining: TimeInterval = 0
     @Published var healthKitEnabled = false
     @Published var activityTypeName: String?
-    
+    @Published private(set) var setsCompleted = 0
+    @Published private(set) var exercisesPerformed = 0
+    @Published private(set) var now = Date()
+
+    private var workoutID: UUID?
+    private var lastRevision = -1
+
+    // MARK: Derived
+
+    var isCompleted: Bool { mirror?.state.isFinished ?? false }
+    var isResting: Bool { mirror?.currentStep?.isRest ?? false }
+    var phaseEndDate: Date? { mirror?.state.phaseEnd }
+
+    /// The exercise to headline — during a rest, the one coming up (matches the phone).
+    var currentExerciseIndex: Int { mirror?.headlineExerciseIndex() ?? 0 }
+
     var currentExercise: Exercise? {
-        guard !exercises.isEmpty else { return nil }
-        let safeIndex = min(max(0, currentExerciseIndex), exercises.count - 1)
-        return exercises[safeIndex]
+        guard let mirror, let index = mirror.headlineExerciseIndex() else { return nil }
+        return mirror.exercises[index]
     }
-    
-    var displayExerciseNumber: Int {
-        guard !exercises.isEmpty else { return 0 }
-        return min(max(0, currentExerciseIndex), exercises.count - 1) + 1
+
+    var displayExerciseNumber: Int { exercises.isEmpty ? 0 : currentExerciseIndex + 1 }
+
+    var currentExerciseName: String {
+        mirror?.displayName(ofExercise: currentExerciseIndex, kind: kind) ?? kind.itemName
     }
-    
-    // MARK: - Workout Lifecycle
-    
-    /// Set up the workout display. Called when either device initiates a workout.
-    /// Does NOT start timers — the iPhone sends `.updatePhase` with timing data.
-    func startWorkout(exercises: [Exercise], kind: SessionKind, healthKitEnabled: Bool, activityType: String?) {
+
+    var progressLabel: String { mirror?.progressLabel(kind: kind) ?? "" }
+
+    var phaseStyle: PhaseStyle { mirror?.phaseStyle() ?? .finished }
+
+    var upNextText: String { mirror?.upNextText(kind: kind, now: now) ?? "" }
+
+    var windowTimeRemaining: TimeInterval? { mirror?.windowTimeRemaining(at: now) }
+
+    var totalSets: Int { mirror?.plan.workStepCount ?? 0 }
+
+    // MARK: Lifecycle
+
+    /// Show the workout UI immediately when a session starts (from either device). The
+    /// iPhone's first sync follows within moments; until then the watch shows the first step
+    /// from a locally built engine.
+    func startWorkout(exercises: [Exercise], kind: SessionKind, healthKitEnabled: Bool, activityType: String?, workoutID: UUID? = nil) {
         self.exercises = exercises
         self.kind = kind
-        self.currentExerciseIndex = 0
-        self.currentSet = 1
-        self.isResting = false
+        self.mirror = SessionEngine(exercises: exercises, now: Date())
         self.isPaused = false
-        self.isCompleted = false
         self.isWorkoutRunning = true
         self.healthKitEnabled = healthKitEnabled
         self.activityTypeName = activityType
+        self.workoutID = workoutID
+        self.lastRevision = -1
+        self.setsCompleted = 0
+        self.exercisesPerformed = 0
+        tickTimer()
     }
-    
+
     func stopWorkout() {
-        isCompleted = true
         isWorkoutRunning = false
+        mirror = nil
     }
-    
-    // MARK: - Display Timer
-    
-    /// Update the display countdown. Called every timer tick.
-    /// Plays haptic feedback when a timed phase reaches zero.
+
+    /// Apply the iPhone's authoritative state. Returns true if this sync finished the workout.
+    @discardableResult
+    func apply(_ sync: SessionSync) -> Bool {
+        if sync.workoutID != workoutID {
+            // Another workout (or none running here). Adopt it only if it's live — a stale state
+            // parked in the application context from an earlier session is ignored.
+            guard !sync.state.isFinished, Date().timeIntervalSince(sync.state.phaseStart) < 3 * 3600 else { return false }
+            lastRevision = -1
+        }
+        guard sync.revision > lastRevision else { return false }
+        let wasFinished = isCompleted
+        workoutID = sync.workoutID
+        lastRevision = sync.revision
+        exercises = sync.exercises
+        mirror = SessionEngine(exercises: sync.exercises, state: sync.state)
+        isPaused = sync.state.isPaused
+        setsCompleted = sync.setsCompleted
+        exercisesPerformed = sync.exercisesPerformed
+        if !isWorkoutRunning && !sync.state.isFinished { isWorkoutRunning = true }
+        tickTimer()
+        return !wasFinished && sync.state.isFinished
+    }
+
+    // MARK: Display timer
+
+    /// Called every display tick. The engine is deterministic, so the watch advances its own copy
+    /// through timed phases — it keeps counting correctly even when the iPhone is locked and
+    /// can't send updates. The iPhone's next sync is still authoritative.
     func tickTimer() {
-        guard !isPaused, !isCompleted, let endDate = phaseEndDate else { return }
-        let newRemaining = max(0, endDate.timeIntervalSinceNow)
-        // Haptic feedback when countdown hits zero
-        if timeRemaining > 0 && newRemaining <= 0 {
+        now = Date()
+        guard var engine = mirror, !isPaused, !engine.state.isFinished else { return }
+        let events = engine.tick(now: now)
+        if events.contains(.phaseChanged) {
             WKInterfaceDevice.current().play(.notification)
+            mirror = engine
         }
-        timeRemaining = newRemaining
-    }
-    
-    /// Recalculate display timer after wrist-raise or app foregrounding.
-    func recalculateOnWake() {
-        guard !isPaused, !isCompleted, let endDate = phaseEndDate else { return }
-        timeRemaining = max(0, endDate.timeIntervalSinceNow)
-    }
-    
-    // MARK: - State Updates from iPhone
-    
-    /// Apply a state update received from iPhone via `.updatePhase`.
-    func applyUpdate(exerciseIndex: Int, set: Int, isResting: Bool,
-                     isPaused: Bool, phaseEndDate: Date?, isCompleted: Bool) {
-        self.currentExerciseIndex = exerciseIndex
-        self.currentSet = set
-        self.isResting = isResting
-        self.isPaused = isPaused
-        self.phaseEndDate = phaseEndDate
-        self.isCompleted = isCompleted
-        if let endDate = phaseEndDate {
-            self.timeRemaining = max(0, endDate.timeIntervalSinceNow)
-        }
+        timeRemaining = engine.timeRemaining(at: now) ?? 0
     }
 
-    /// Mirrors a mid-session weight change made on iPhone/Mac — see `WorkoutCommand.updateWeight`.
-    func applyWeightUpdate(exerciseIndex: Int, weight: Double?, weightUnit: WeightUnit) {
-        guard exercises.indices.contains(exerciseIndex) else { return }
-        exercises[exerciseIndex].weight = weight
-        exercises[exerciseIndex].weightUnit = weightUnit
-    }
+    func recalculateOnWake() { tickTimer() }
 
-    /// Mirrors a mid-session target-reps change made on iPhone/Mac — see `WorkoutCommand.updateTargetReps`.
-    func applyTargetRepsUpdate(exerciseIndex: Int, reps: Int?, repsMax: Int?) {
-        guard exercises.indices.contains(exerciseIndex) else { return }
-        exercises[exerciseIndex].targetReps = reps
-        exercises[exerciseIndex].targetRepsMax = repsMax
-    }
-
-    // MARK: - Up Next Text
-    
-    var upNextText: String {
-        guard !isCompleted, let exercise = currentExercise else { return "" }
-        let safeIndex = min(max(0, currentExerciseIndex), exercises.count - 1)
-        let groupRange = exercises.supersetGroupRange(containing: safeIndex)
-        let roundCount = exercises.roundCount(for: groupRange)
-        // Timed Superset: members run back-to-back regardless of their own restDuration, and the
-        // iPhone (timer authority) uses whatever's left of the budget as a holding rest once the
-        // group's current round finishes — see `Exercise.groupTimeBudget`. The exact remaining
-        // amount isn't mirrored here, so this just predicts "a rest is coming" without a duration.
-        // A `wholeChain` budget only does this after the LAST round; earlier rounds loop with no rest.
-        let isTimedSuperset = exercises[groupRange.lowerBound].groupTimeBudget != nil
-        let isWholeChainBudget = isTimedSuperset && exercises[groupRange.lowerBound].groupTimeBudgetScope == .wholeChain
-
-        func nextExerciseAfterGroupText() -> String {
-            let nextIndex = groupRange.upperBound + 1
-            if nextIndex >= exercises.count {
-                return "Up Next: \(kind.upNextCompleteLabel)"
-            }
-            return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
-        }
-
-        if isResting {
-            // Rest only ever happens after the last exercise in a group finishes a round.
-            let nextSet = currentSet + 1
-            if nextSet <= roundCount {
-                let first = exercises[groupRange.lowerBound]
-                let name = first.name.isEmpty ? "\(kind.itemName) \(groupRange.lowerBound + 1)" : first.name
-                if first.isTimeBased {
-                    return "Up Next: \(name) – Round \(nextSet)"
-                } else {
-                    return "Up Next: \(name) – Round \(nextSet) (\(kind == .workout ? "Reps" : "Prompt"))"
-                }
-            } else {
-                return nextExerciseAfterGroupText()
-            }
-        } else if currentExerciseIndex < groupRange.upperBound {
-            // More linked exercises remain this round. A timed superset always continues straight
-            // into the next one; otherwise the exercise's own restDuration may insert a rest here.
-            if !isTimedSuperset, exercise.restDuration > 0 {
-                return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-            }
-            let nextIndex = currentExerciseIndex + 1
-            return "Up Next: \(nextExerciseLabel(exercises[nextIndex], index: nextIndex))"
-        } else if currentSet < roundCount {
-            if isWholeChainBudget {
-                return "Up Next: Round \(currentSet + 1)"
-            } else if isTimedSuperset {
-                return "Up Next: Rest, then Round \(currentSet + 1)"
-            } else if exercise.restDuration > 0 {
-                return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-            } else {
-                return "Up Next: Round \(currentSet + 1)"
-            }
-        } else {
-            if isTimedSuperset {
-                return "Up Next: Rest"
-            } else if exercise.restDuration > 0 {
-                return "Up Next: Rest (\(formatTime(exercise.restDuration)))"
-            } else {
-                return nextExerciseAfterGroupText()
-            }
-        }
-    }
-
-    private func nextExerciseLabel(_ exercise: Exercise, index: Int) -> String {
-        let name = exercise.name.isEmpty ? "\(kind.itemName) \(index + 1)" : exercise.name
-        let summary = exercise.quickSummary
-        return summary.isEmpty ? name : "\(name) · \(summary)"
-    }
-    
-    func formatTime(_ time: TimeInterval) -> String {
-        let totalSeconds = Int(time)
-        let hours = totalSeconds / 3600
-        let minutes = (totalSeconds % 3600) / 60
-        let seconds = totalSeconds % 60
-        
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%d:%02d", minutes, seconds)
-        }
-    }
+    func formatTime(_ time: TimeInterval) -> String { SessionFormat.time(time) }
 }

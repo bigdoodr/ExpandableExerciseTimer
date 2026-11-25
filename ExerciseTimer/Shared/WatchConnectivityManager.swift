@@ -34,6 +34,9 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     @Published private(set) var currentWorkoutID: UUID?
 
     private var session: WCSession?
+    /// Last application context pushed, so a session-state update can be merged into it rather
+    /// than wiping the exercise list / HealthKit settings that also live there.
+    private var lastContext: [String: Any] = [:]
     
     override init() {
         super.init()
@@ -55,6 +58,25 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         guard let data = try? JSONEncoder().encode(command) else { return }
         let message: [String: Any] = [WCContextKey.workoutCommand: data]
 
+        // Session state is "latest wins": send it live when possible, and also park the newest
+        // copy in the application context so a watch that was asleep or out of range catches up
+        // the moment it reconnects. Never queued with transferUserInfo — a backlog of stale
+        // states replayed in order is exactly what we don't want.
+        if case .sync = command {
+            var context = lastContext
+            context[WCContextKey.sessionSync] = data
+            lastContext = context
+            try? session.updateApplicationContext(context)
+            if session.isReachable {
+                session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+            }
+            return
+        }
+        if case .stop = command, lastContext[WCContextKey.sessionSync] != nil {
+            lastContext[WCContextKey.sessionSync] = nil
+            try? session.updateApplicationContext(lastContext)
+        }
+
         // Zone summaries are computed only once the HealthKit session has finished, which
         // routinely lands while the counterpart is backgrounded or mid-transition.
         // transferUserInfo queues reliably and delivers regardless of reachability;
@@ -70,7 +92,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
                 // Only queue commands that are safe to deliver out-of-order later.
                 // Never queue time-sensitive or idempotent-breaking commands.
                 switch command {
-                case .healthData, .stop, .pause, .resume, .repsComplete, .skipPhase, .wake: return
+                case .healthData, .stop, .pause, .resume, .repsComplete, .skipPhase, .wake, .undo, .sync: return
                 default: break
                 }
                 session.transferUserInfo(message)
@@ -78,7 +100,7 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         } else {
             // When counterpart is unreachable, only queue durable setup commands.
             switch command {
-            case .healthData, .stop, .pause, .resume, .repsComplete, .skipPhase, .wake: return
+            case .healthData, .stop, .pause, .resume, .repsComplete, .skipPhase, .wake, .undo, .sync: return
             default: break
             }
             session.transferUserInfo(message)
@@ -105,6 +127,9 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
             context[WCContextKey.hrZoneSettings] = zoneData
         }
 
+        // Keep any in-flight session state alongside the refreshed exercise list.
+        if let sync = lastContext[WCContextKey.sessionSync] { context[WCContextKey.sessionSync] = sync }
+        lastContext = context
         try? session.updateApplicationContext(context)
     }
     
@@ -139,6 +164,15 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         if let zoneData = message[WCContextKey.hrZoneSettings] as? Data,
            let zoneSettings = try? JSONDecoder().decode(HRZoneSettings.self, from: zoneData) {
             HRZoneStore.save(zoneSettings)
+        }
+
+        // A session state parked in the application context (see `sendWorkoutCommand`).
+        if let syncData = message[WCContextKey.sessionSync] as? Data,
+           let command = try? JSONDecoder().decode(WorkoutCommand.self, from: syncData) {
+            Task { @MainActor in
+                self.receivedCommand = command
+                self.commandSequence += 1
+            }
         }
 
         if let commandData = message[WCContextKey.workoutCommand] as? Data,

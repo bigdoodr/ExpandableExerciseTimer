@@ -196,6 +196,37 @@ struct OnboardingView: View {
         )
         #endif
 
+        // 3.0: rebuilt session engine + Fitness+-inspired logging and progression.
+        items.append(contentsOf: [
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [3, 0], build: 1),
+                step: OnboardingStep(
+                    symbol: "gearshape.2.fill",
+                    color: .orange,
+                    title: "A Rebuilt, Steadier Timer",
+                    description: "Sessions run on a brand-new engine. Supersets and Timed Supersets loop rounds correctly every time, pausing now freezes a superset's time budget too, Undo works for any step, and the timer catches up exactly if your phone was locked."
+                )
+            ),
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [3, 0], build: 1),
+                step: OnboardingStep(
+                    symbol: "chart.line.uptrend.xyaxis",
+                    color: .green,
+                    title: "Log Sets, See Last Time",
+                    description: "Log the reps and weight you actually did for each set. Next time, each exercise shows what you did before and suggests when to go heavier, and the recap calls out new personal bests."
+                )
+            ),
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [3, 0], build: 1),
+                step: OnboardingStep(
+                    symbol: "list.bullet.rectangle.fill",
+                    color: .blue,
+                    title: "Preview, Swap, Skip & Add",
+                    description: "Preview a routine block by block before you start. Mid-workout, the ••• menu lets you swap an exercise when equipment is taken, skip the rest of an exercise or superset, or add a set or round."
+                )
+            )
+        ])
+
         return items.sorted { $0.introducedIn < $1.introducedIn }
     }
 

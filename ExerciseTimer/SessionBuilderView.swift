@@ -93,7 +93,8 @@ struct SessionBuilderView: View {
             keepScreenAwake: $keepScreenAwake,
             enableBackgroundAudio: $enableBackgroundAudio,
             healthKitEnabled: healthKitEnabled,
-            activityType: activityType
+            activityType: activityType,
+            routineName: loadedRoutineName
         )
         view.onExerciseAdjusted = applyLiveAdjustment
         return view
@@ -105,7 +106,8 @@ struct SessionBuilderView: View {
             exercises: exercises,
             isActive: $isWorkoutActive,
             healthKitEnabled: false,
-            activityType: .functionalStrengthTraining
+            activityType: .functionalStrengthTraining,
+            routineName: loadedRoutineName
         )
         view.onExerciseAdjusted = applyLiveAdjustment
         return view
@@ -226,9 +228,32 @@ struct SessionBuilderView: View {
     }
 #endif
 
+    /// Name of the saved routine currently loaded, for the recap and workout history.
+    private var loadedRoutineName: String? {
+        guard let loadedRoutineID else { return nil }
+        return savedRoutines.first { $0.id == loadedRoutineID }?.name
+    }
+
     @ViewBuilder
     private var startSection: some View {
         Section {
+            // Fitness+-style preview: the whole session, block by block, before you commit.
+            NavigationLink {
+                WorkoutOverviewView(kind: kind, exercises: exercises)
+            } label: {
+                let plan = WorkoutPlan(exercises: exercises)
+                let minutes = Int((plan.estimatedDuration() / 60).rounded())
+                HStack {
+                    Image(systemName: "list.bullet.rectangle")
+                    Text("Preview")
+                    Spacer()
+                    Text("\(minutes < 1 ? "<1" : "~\(minutes)") min · \(plan.workStepCount) \(kind.recapSetsLabel.lowercased())")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .font(.subheadline)
+            }
+
             Button(action: startOrSearchForWatch) {
                 HStack {
                     Image(systemName: "play.fill")

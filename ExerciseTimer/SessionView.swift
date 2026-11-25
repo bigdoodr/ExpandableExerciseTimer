@@ -1,1452 +1,550 @@
 import SwiftUI
-import AVFoundation
 #if canImport(UIKit)
 import UIKit
 #endif
-#if canImport(UserNotifications)
-import UserNotifications
-#endif
-#if canImport(HealthKit)
-import HealthKit
-#endif
-#if canImport(WatchConnectivity)
-import WatchConnectivity
-#endif
-internal import Combine
 
-fileprivate struct WorkoutUndoAction: Codable {
-    let exerciseIndex: Int
-    let setBefore: Int
-    let wasResting: Bool
-    let advancedExercise: Bool
-    /// `recapActiveTime` just before this action's advance, so undo can revert the recap
-    /// breakdown's double-count of the set that's being undone.
-    let activeTimeBefore: TimeInterval
-}
-
+/// The running-session screen. All timing and superset logic lives in `SessionEngine` (shared,
+/// unit-tested) and `SessionController`; this view only renders state and forwards taps.
+///
+/// Layout borrows from Fitness+ Gym Strength's flow: a block-by-block progress strip, one clear
+/// exercise card with today's target and what you did last time, a set tracker you log into,
+/// and a single overflow menu for in-the-moment changes (swap, skip, add a set) instead of a
+/// wall of buttons.
 struct SessionView: View {
     let kind: SessionKind
-    /// Mutable (not `let`) so weight can be adjusted for the next set/round mid-session — see `updateCurrentExerciseWeight`.
-    @State private var exercises: [Exercise]
     @Binding var isActive: Bool
-    /// Notifies the builder of a mid-session weight/reps edit so it can be written back to the
-    /// builder's own list and the saved routine the session was loaded from, if any — see
-    /// `SessionBuilderView.applyLiveAdjustment`. Defaulted so none of the custom inits below need it.
+    /// Notifies the builder of a mid-session weight/reps edit (see `SessionBuilderView.applyLiveAdjustment`).
     var onExerciseAdjusted: (Exercise) -> Void = { _ in }
 #if canImport(UIKit)
     @Binding var keepScreenAwake: Bool
     @Binding var enableBackgroundAudio: Bool
 #endif
-#if canImport(HealthKit)
-    var healthKitEnabled: Bool
-    var activityType: WorkoutActivityOption
-#endif
-
-    // Split into separate whole declarations per platform combo — `#if` inside a single
-    // parameter list isn't reliably supported by the compiler's parser.
-#if canImport(UIKit) && canImport(HealthKit)
-    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, keepScreenAwake: Binding<Bool>, enableBackgroundAudio: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption) {
-        self.kind = kind
-        self._exercises = State(initialValue: exercises)
-        self._isActive = isActive
-        self._keepScreenAwake = keepScreenAwake
-        self._enableBackgroundAudio = enableBackgroundAudio
-        self.healthKitEnabled = healthKitEnabled
-        self.activityType = activityType
-    }
-#elseif canImport(HealthKit)
-    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption) {
-        self.kind = kind
-        self._exercises = State(initialValue: exercises)
-        self._isActive = isActive
-        self.healthKitEnabled = healthKitEnabled
-        self.activityType = activityType
-    }
-#else
-    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>) {
-        self.kind = kind
-        self._exercises = State(initialValue: exercises)
-        self._isActive = isActive
-    }
-#endif
+    @StateObject private var controller: SessionController
+    @Environment(\.scenePhase) private var scenePhase
 #if canImport(WatchConnectivity)
     @StateObject private var connectivity = WatchConnectivityManager.shared
 #endif
-#if canImport(HealthKit) && !os(macOS)
-    @StateObject private var healthKitManager = HealthKitWorkoutManager.shared
-#endif
-    
-    @State private var currentExerciseIndex = 0
-    @State private var currentSet = 1
-    @State private var isResting = false
-    @State private var isPaused = false
-    @State private var timeRemaining: TimeInterval = 0
-    @State private var phaseEndDate: Date = .now
-    @State private var isCompleted = false
-    @State private var isExiting = false
-    @State private var pausedTimeRemaining: TimeInterval? = nil
-    /// True while `isResting` is a rest *between* two linked superset/circuit exercises (not the
-    /// rest after the group's last exercise finishes a round). Set right before entering that rest
-    /// phase so `timerExpired()` knows to resume at the next chain member instead of looping the group.
-    @State private var restAdvancesWithinGroup = false
-    /// Deadline for the current round of a Timed Superset group (`groupTimeBudget` on the group's
-    /// first exercise) — re-armed in `startCurrentPhase()` whenever a fresh round begins.
-    @State private var groupRoundEndDate: Date? = nil
-    /// Overrides `currentExercise.restDuration` for the rest phase currently in progress, used only
-    /// for a Timed Superset's between-round rest (whatever's left of the round's time budget).
-    /// `nil` means the rest phase uses the exercise's own configured `restDuration`, as usual.
-    @State private var currentRestDurationOverride: TimeInterval? = nil
-    /// Backs the mid-session "adjust weight" sheet — see `beginEditingWeight`/`updateCurrentExerciseWeight`.
-    @State private var showWeightEditor = false
-    @State private var weightEditText = ""
-    @State private var weightEditUnit: WeightUnit = .lbs
-    @FocusState private var isWeightEditFieldFocused: Bool
-    /// Backs the mid-session "adjust target reps" sheet — see `beginEditingReps`/`updateCurrentExerciseReps`.
-    @State private var showRepsEditor = false
-    @State private var repsEditText = ""
-    @State private var repsEditIsRange = false
-    @State private var repsMaxEditText = ""
 
-    /// Wall-clock timestamp of when the current phase (exercise or rest) began — used only to
-    /// measure elapsed time for manual-advance exercises, which have no countdown of their own.
-    @State private var phaseStartDate: Date = .now
-    /// Set right before calling `timerExpired()` from `skipPhaseTapped()` so the phase-ending
-    /// recorders can tell a manual skip apart from a natural completion. Cleared once read.
-    @State private var isSkippingCurrentPhase = false
-    /// Recap breakdown accumulators — see `recordActivePhaseEnding`/`recordRestPhaseEnding`.
-    @State private var recapActiveTime: TimeInterval = 0
-    @State private var recapRestTime: TimeInterval = 0
-    @State private var recapExercisesSkipped = 0
-    @State private var recapRestTimeSkipped: TimeInterval = 0
+    // Editors
+    @State private var editingWeightFor: Int?
+    @State private var editingRepsFor: Int?
+    @State private var swappingExercise: Int?
+    @State private var showPlan = false
+    @State private var showEndConfirmation = false
+    /// Reps the person is about to log for a rep-based set; reset to the target on each new set.
+    @State private var pendingReps: Int?
+    @State private var pendingStepIndex: Int = -1
 
-    @State private var undoAction: WorkoutUndoAction? = nil
-    @State private var showUndoToast = false
-    @State private var showCancelConfirmation = false
-    @State private var workoutStartDate: Date = .now
-    @State private var showRecap = false
-    @State private var recapDuration: TimeInterval = 0
-    @State private var recapExercisesCompleted = 0
-    @State private var recapSetsCompleted = 0
-    @State private var recapHeartRate: Double = 0
-    @State private var recapCalories: Double = 0
-    @State private var recapCompletedNaturally = false
-    @State private var heartRateReadings: [Double] = []
-    @State private var sessionElapsed: TimeInterval = 0
-    /// HR zone breakdown forwarded from the watch, when the watch (not the iPhone) owns the HealthKit session
-    @State private var recapZoneSummary: [HRZoneRecapEntry] = []
-#if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
-    @State private var iPhoneOwnsHKSession = false
+    // Split per platform combo — `#if` inside one parameter list isn't reliably parsed.
+#if canImport(UIKit) && canImport(HealthKit)
+    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, keepScreenAwake: Binding<Bool>, enableBackgroundAudio: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption, routineName: String? = nil) {
+        self.kind = kind
+        self._isActive = isActive
+        self._keepScreenAwake = keepScreenAwake
+        self._enableBackgroundAudio = enableBackgroundAudio
+        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, healthKitEnabled: healthKitEnabled, activityType: activityType))
+    }
+#elseif canImport(HealthKit)
+    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption, routineName: String? = nil) {
+        self.kind = kind
+        self._isActive = isActive
+        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, healthKitEnabled: healthKitEnabled, activityType: activityType))
+    }
+#else
+    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, routineName: String? = nil) {
+        self.kind = kind
+        self._isActive = isActive
+        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, healthKitEnabled: false, activityType: .functionalStrengthTraining))
+    }
 #endif
-    
-    let audioEngine = AVAudioEngine()
-    /// Retained reference for completion sound so AVAudioPlayer isn't deallocated mid-play
-    @State private var completionSoundPlayer: AVAudioPlayer?
+
+    private var engine: SessionEngine { controller.engine }
+
+    var body: some View {
+        Group {
+            if let recap = controller.recap {
+                SessionRecapView(controller: controller, recap: recap) { isActive = false }
+            } else {
+                sessionContent
+            }
+        }
+        .onAppear {
+            controller.onExerciseAdjusted = onExerciseAdjusted
 #if canImport(UIKit)
-    private let backgroundPlayerNode = AVAudioPlayerNode()
-    @State private var isBackgroundLoopRunning = false
+            controller.start(backgroundAudio: enableBackgroundAudio)
+            UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
+#else
+            controller.start(backgroundAudio: false)
 #endif
-    
-    let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
-    @Environment(\.scenePhase) private var scenePhase
-    
-    var currentExercise: Exercise {
-        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
-        return exercises[safeIndex]
+        }
+        .onDisappear {
+            controller.tearDown()
+#if canImport(UIKit)
+            UIApplication.shared.isIdleTimerDisabled = false
+#endif
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { controller.catchUp() }
+        }
+#if canImport(UIKit)
+        .onChange(of: keepScreenAwake) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
+        .onChange(of: enableBackgroundAudio) { _, on in controller.setBackgroundAudio(on) }
+#endif
+#if canImport(WatchConnectivity)
+        .onChange(of: connectivity.commandSequence) { _, _ in
+            controller.handle(connectivity.receivedCommand)
+        }
+#endif
+        .alert(kind.endAlertTitle, isPresented: $showEndConfirmation) {
+            Button(kind.endButtonLabel, role: .destructive) { controller.endEarly() }
+            Button("Keep Going", role: .cancel) {}
+        } message: {
+            Text(kind.endAlertMessage)
+        }
+        .sheet(item: $editingWeightFor.asIdentifiable) { item in
+            WeightEditorSheet(exercise: engine.exercises[item.id]) { weight, unit in
+                controller.updateWeight(exerciseIndex: item.id, weight: weight, unit: unit)
+            }
+        }
+        .sheet(item: $editingRepsFor.asIdentifiable) { item in
+            RepsEditorSheet(exercise: engine.exercises[item.id]) { reps, max in
+                controller.updateReps(exerciseIndex: item.id, reps: reps, repsMax: max)
+            }
+        }
+        .sheet(item: $swappingExercise.asIdentifiable) { item in
+            SwapExerciseSheet(kind: kind, currentName: engine.displayName(ofExercise: item.id, kind: kind)) { name in
+                controller.swapExercise(at: item.id, toName: name)
+            }
+        }
+        .sheet(isPresented: $showPlan) {
+            NavigationStack {
+                WorkoutOverviewView(kind: kind, exercises: engine.exercises, engine: engine)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) { Button("Done") { showPlan = false } }
+                    }
+            }
+        }
     }
 
-    /// The superset group containing the current exercise — a single-element range for a lone exercise.
-    var currentGroupRange: ClosedRange<Int> {
-        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
-        return exercises.supersetGroupRange(containing: safeIndex)
+    // MARK: - Session layout
+
+    private var sessionContent: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                topBar
+                BlockProgressStrip(engine: engine)
+                exerciseCard
+                phaseCard
+                if kind == .workout, let index = engine.headlineExerciseIndex() {
+                    SetTracker(engine: engine, exerciseIndex: index)
+                }
+                if engine.currentStep?.isRest == true, kind == .workout, let last = engine.lastRecord,
+                   !last.skipped, last.reps != nil || last.weight != nil {
+                    LastSetLogCard(record: last) { reps, weight in
+                        controller.amendLastRecord(reps: reps, weight: weight)
+                    }
+                }
+                let upNext = engine.upNextText(kind: kind, now: controller.now)
+                if !upNext.isEmpty {
+                    Text(upNext)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+#if canImport(HealthKit) && canImport(UIKit)
+                if controller.healthKitEnabled && HealthKitWorkoutManager.shared.isWorkoutActive {
+                    HealthMetricsStrip(manager: HealthKitWorkoutManager.shared)
+                }
+#endif
+                controls
+            }
+            .padding()
+        }
+        .overlay(alignment: .bottom) { undoToast }
+        .onChange(of: engine.state.stepIndex, initial: true) { _, _ in resetPendingReps() }
     }
 
-    /// Live "time left in this round" for a Timed Superset group, or nil when the group currently
-    /// in progress doesn't use a shared time budget (`groupTimeBudget`).
-    var groupRoundTimeRemaining: TimeInterval? {
-        guard exercises[currentGroupRange.lowerBound].groupTimeBudget != nil,
-              let endDate = groupRoundEndDate else { return nil }
-        return max(0, endDate.timeIntervalSinceNow)
-    }
-
-    @ViewBuilder
-    private func timedSupersetRoundBadge(timeRemaining: TimeInterval) -> some View {
-        let isWholeChain = exercises[currentGroupRange.lowerBound].groupTimeBudgetScope == .wholeChain
-        HStack(spacing: 6) {
-            Image(systemName: "timer")
-            Text(isWholeChain ? "\(formatTime(timeRemaining)) left" : "\(formatTime(timeRemaining)) left in round")
+    private var topBar: some View {
+        HStack {
+            Label(SessionFormat.time(controller.now.timeIntervalSince(engine.state.startedAt)), systemImage: "clock")
+                .monospacedDigit()
+            Spacer()
+            if engine.state.isPaused {
+                Label("Paused", systemImage: "pause.circle.fill").foregroundStyle(.orange)
+            }
+            Spacer()
+            Button { showPlan = true } label: {
+                Label("Plan", systemImage: "list.bullet.rectangle")
+            }
         }
         .font(.subheadline)
         .foregroundStyle(.secondary)
     }
 
-    var displayExerciseNumber: Int {
-        guard !exercises.isEmpty else { return 0 }
-        let idx = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
-        return idx + 1
-    }
-    var totalExercises: Int { exercises.count }
-    
-    var upNextText: String {
-        guard !isCompleted else { return "" }
-        let groupRange = currentGroupRange
-        let roundCount = exercises.roundCount(for: groupRange)
-        // Timed Superset: the group shares one time budget per round instead of each member's
-        // own `restDuration` — see `groupTimeBudget` and `advancePastCompletedSet`. A `wholeChain`
-        // budget never inserts a leftover-time rest between rounds, so only `perRound` predicts one.
-        let groupTimeBudget = exercises[groupRange.lowerBound].groupTimeBudget
-        let isPerRoundBudget = groupTimeBudget != nil && exercises[groupRange.lowerBound].groupTimeBudgetScope == .perRound
-        let remainingRoundTime = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? 0)
-
-        func nextExerciseAfterGroupText() -> String {
-            let nextIndex = groupRange.upperBound + 1
-            if nextIndex >= exercises.count {
-                return "Up Next: \(kind.upNextCompleteLabel)"
-            }
-            let next = exercises[nextIndex]
-            let nextName = next.name.isEmpty ? "\(kind.itemName) \(nextIndex + 1)" : next.name
-            let nextSummary = next.quickSummary
-            return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
-        }
-
-        if isResting {
-            if restAdvancesWithinGroup {
-                // Mid-chain rest — next up is simply the next linked exercise, not a round loop.
-                let nextIndex = currentExerciseIndex + 1
-                let next = exercises[nextIndex]
-                let nextName = next.name.isEmpty ? "\(kind.itemName) \(nextIndex + 1)" : next.name
-                let nextSummary = next.quickSummary
-                return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
-            }
-            // Otherwise, rest happens after the last exercise in the group finishes a round.
-            let nextSet = currentSet + 1
-            if nextSet <= roundCount {
-                // Another round — loop back to the first exercise in the group.
-                let first = exercises[groupRange.lowerBound]
-                let name = first.name.isEmpty ? "\(kind.itemName) \(groupRange.lowerBound + 1)" : first.name
-                if first.isTimeBased {
-                    return "Up Next: \(name) – Round \(nextSet)"
-                } else {
-                    return "Up Next: \(name) – Round \(nextSet) (\(kind == .workout ? "Reps" : "Prompt"))"
+    @ViewBuilder
+    private var exerciseCard: some View {
+        if let index = engine.headlineExerciseIndex() {
+            let exercise = engine.exercises[index]
+            VStack(spacing: 8) {
+                if let superset = engine.supersetPositionLabel(kind: kind) {
+                    Text(superset.uppercased())
+                        .font(.caption.bold())
+                        .foregroundStyle(.purple)
                 }
-            } else {
-                return nextExerciseAfterGroupText()
-            }
-        } else if currentExerciseIndex < groupRange.upperBound {
-            // More linked exercises remain this round. A timed superset always continues straight
-            // into the next one — only a normal chain's own `restDuration` inserts a rest here.
-            if groupTimeBudget == nil, currentExercise.restDuration > 0 {
-                return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
-            }
-            let nextIndex = currentExerciseIndex + 1
-            let next = exercises[nextIndex]
-            let nextName = next.name.isEmpty ? "\(kind.itemName) \(nextIndex + 1)" : next.name
-            let nextSummary = next.quickSummary
-            return "Up Next: \(nextName)\(nextSummary.isEmpty ? "" : " · \(nextSummary)")"
-        } else if currentSet < roundCount {
-            // Last exercise in the group, but more rounds remain
-            if isPerRoundBudget {
-                return remainingRoundTime > 0 ? "Up Next: Rest (\(formatTime(remainingRoundTime)))" : "Up Next: Round \(currentSet + 1)"
-            } else if groupTimeBudget != nil {
-                return "Up Next: Round \(currentSet + 1)"
-            } else if currentExercise.restDuration > 0 {
-                return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
-            } else {
-                return "Up Next: Round \(currentSet + 1)"
-            }
-        } else {
-            // Final round of the final exercise in the group. Both scopes behave the same here:
-            // whatever's left of the budget (per-round or whole-chain) becomes a holding rest.
-            if groupTimeBudget != nil {
-                return remainingRoundTime > 0 ? "Up Next: Rest (\(formatTime(remainingRoundTime)))" : nextExerciseAfterGroupText()
-            } else if currentExercise.restDuration > 0 {
-                return "Up Next: Rest (\(formatTime(currentExercise.restDuration)))"
-            } else {
-                return nextExerciseAfterGroupText()
-            }
-        }
-    }
-    
-    var body: some View {
-        Group {
-            if showRecap {
-                recapView
-            } else {
-                workoutContent
-            }
-        }
-        .alert(kind.endAlertTitle, isPresented: $showCancelConfirmation) {
-            Button(kind.endButtonLabel, role: .destructive) {
-                captureRecap(completedNaturally: false)
-                beginExit()
-                showRecap = true
-            }
-            Button("Keep Going", role: .cancel) {}
-        } message: {
-            Text(kind.endAlertMessage)
-        }
-        .sheet(isPresented: $showWeightEditor) {
-            weightEditorSheet
-        }
-        .sheet(isPresented: $showRepsEditor) {
-            repsEditorSheet
-        }
-    }
-
-    // Combines the phase label with the exercise counter on one line, freeing up the vertical
-    // space the counter used to take above the exercise title.
-    private func phaseHeader(label: String, color: Color) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.title)
-                .bold()
-                .foregroundStyle(color)
-            Text("•")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            Text("\(displayExerciseNumber) of \(totalExercises)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var workoutContent: some View {
-        ScrollView {
-            VStack(spacing: 30) {
-                Text(formatTime(sessionElapsed))
+                Text(engine.displayName(ofExercise: index, kind: kind))
+                    .font(.largeTitle.bold())
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(2)
+                Text(engine.progressLabel(kind: kind))
                     .font(.title3)
-                    .monospacedDigit()
                     .foregroundStyle(.secondary)
 
-                VStack(spacing: 8) {
-                    Text(currentExercise.name.isEmpty ? "\(kind.itemName) \(displayExerciseNumber)" : currentExercise.name)
-                        .font(.largeTitle)
-                        .bold()
-
-                    Text(currentGroupRange.count > 1 ? "Round \(currentSet) of \(exercises.roundCount(for: currentGroupRange))" : "\(kind.setUnitSingular) \(currentSet) of \(currentExercise.sets)")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-
-                    // Reps and weight share one line (e.g. "10 reps @ 50 LB") rather than stacking separately.
-                    // Timers never carry target reps or weight, so this whole line is workout-only.
-                    if kind == .workout {
-                        HStack(spacing: 6) {
-                            if !currentExercise.isTimeBased {
-                                if let reps = currentExercise.targetReps {
-                                    // Tappable so target reps can be adjusted mid-session, same as weight below — see `updateCurrentExerciseReps`.
-                                    Button {
-                                        beginEditingReps()
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            Text(repsRangeText(reps: reps, repsMax: currentExercise.targetRepsMax))
-                                                .font(.title3)
-                                                .bold()
-                                                .foregroundStyle(.purple)
-                                            Image(systemName: "pencil.circle.fill")
-                                                .font(.caption)
-                                                .foregroundStyle(.purple.opacity(0.6))
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                } else {
-                                    // No target means as many reps as possible — still tappable to set one.
-                                    Button {
-                                        beginEditingReps()
-                                    } label: {
-                                        HStack(spacing: 4) {
-                                            Text("AMRAP")
-                                                .font(.title3)
-                                                .bold()
-                                                .foregroundStyle(.purple)
-                                            Image(systemName: "pencil.circle.fill")
-                                                .font(.caption)
-                                                .foregroundStyle(.purple.opacity(0.6))
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-
-                            // A missing or zero weight is bodyweight work.
-                            let weight = currentExercise.weight ?? 0
-                            if !currentExercise.isTimeBased {
-                                Text("@")
-                                    .font(.title3)
-                                    .foregroundStyle(.secondary)
-                            }
-                            // Tappable so weight can be adjusted mid-session (e.g. a set turns out too heavy/light)
-                            // without ending the workout — see `updateCurrentExerciseWeight`.
-                            Button {
-                                beginEditingWeight()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(weight > 0
-                                         ? String(format: weight.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f \(currentExercise.weightUnit.rawValue)" : "%.1f \(currentExercise.weightUnit.rawValue)", weight)
-                                         : "Bodyweight")
-                                        .font(.title3)
-                                        .bold()
-                                        .foregroundStyle(.blue)
-                                    Image(systemName: "pencil.circle.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(.blue.opacity(0.6))
-                                }
+                if kind == .workout {
+                    HStack(spacing: 6) {
+                        if !exercise.isTimeBased {
+                            Button { editingRepsFor = index } label: {
+                                editableValue(SessionFormat.reps(exercise.targetReps, max: exercise.targetRepsMax), tint: .purple)
                             }
                             .buttonStyle(.plain)
+                            Text("@").foregroundStyle(.secondary)
                         }
+                        Button { editingWeightFor = index } label: {
+                            editableValue(SessionFormat.weight(exercise.weight, unit: exercise.weightUnit), tint: .blue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .font(.title3)
+
+                    if let last = controller.lastPerformance(forExercise: index), !last.summary.isEmpty {
+                        Text("Last time: \(last.summary)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let hint = controller.progressionHint(forExercise: index) {
+                        Label(hint.message, systemImage: "chart.line.uptrend.xyaxis")
+                            .font(.footnote)
+                            .foregroundStyle(.green)
+                            .multilineTextAlignment(.center)
                     }
                 }
-                .padding()
-
-                if isResting {
-                    VStack(spacing: 20) {
-                        phaseHeader(label: kind.restPhaseLabel, color: .orange)
-
-                        Text(formatTime(timeRemaining))
-                            .font(.system(size: 72, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                    }
-                    .padding()
-                } else if currentExercise.isTimeBased {
-                    VStack(spacing: 20) {
-                        phaseHeader(label: kind.activePhaseLabel, color: .green)
-
-                        Text(formatTime(timeRemaining))
-                            .font(.system(size: 72, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-
-                        if let roundTimeRemaining = groupRoundTimeRemaining {
-                            timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
-                        }
-                    }
-                    .padding()
-                } else {
-                    VStack(spacing: 20) {
-                        phaseHeader(label: kind.manualPhaseLabel, color: .blue)
-
-                        if let roundTimeRemaining = groupRoundTimeRemaining {
-                            timedSupersetRoundBadge(timeRemaining: roundTimeRemaining)
-                        }
-
-                        if kind == .workout, currentExercise.targetReps == nil {
-                            Text("Complete your reps")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        GlassActionButton(tint: .blue, action: manualAdvanceTapped) {
-                            Text(kind.manualAdvanceButtonLabel)
-                                .font(.headline)
-                        }
-                        .padding(.horizontal)
-                    }
-                    .padding()
-                }
-                
-                // "Up Next" line
-                if !upNextText.isEmpty {
-                    Text(upNextText)
-                        .font(.subheadline)
+                if let notes = exercise.notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal)
+                        .multilineTextAlignment(.center)
                 }
-                
-#if canImport(HealthKit) && canImport(UIKit)
-                // HealthKit Metrics Display
-                // Show when iPhone session is active, or when watch is forwarding data
-                if healthKitEnabled && healthKitManager.isWorkoutActive {
-                    healthKitMetricsView
-                        .padding(.horizontal)
-                }
-#endif
-                
-#if canImport(UIKit)
-                // Two-row layout in compact width: first row Pause/Cancel, second row Awake and Background Audio
-                Group {
-                    if horizontalSizeClass == .compact {
-                        VStack(spacing: 12) {
-                            HStack(spacing: 8) {
-                                pauseResumeButton
-                                skipButton
-                                cancelButton
-                            }
-                            HStack(spacing: 16) {
-                                awakeButton
-                                backgroundAudioButton
-                            }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func editableValue(_ text: String, tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(text).bold().foregroundStyle(tint)
+            Image(systemName: "pencil.circle.fill").font(.caption).foregroundStyle(tint.opacity(0.6))
+        }
+    }
+
+    @ViewBuilder
+    private var phaseCard: some View {
+        let style = engine.phaseStyle()
+        let tint: Color = style == .rest ? .orange : (style == .manualWork ? .blue : .green)
+        VStack(spacing: 16) {
+            Text(engine.phaseLabel(kind: kind))
+                .font(.headline)
+                .foregroundStyle(tint)
+
+            switch style {
+            case .timedWork, .rest:
+                CountdownRing(remaining: engine.timeRemaining(at: controller.now) ?? 0,
+                              total: phaseLength, tint: tint)
+            case .manualWork:
+                if kind == .workout, let exercise = engine.currentExercise, !exercise.isTimeBased {
+                    // Starts at the target; AMRAP starts blank and only logs a count if you set one.
+                    Stepper(value: Binding(get: { pendingReps ?? 0 }, set: { pendingReps = max(0, $0) }), in: 0...999) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(pendingReps.map(String.init) ?? "–")
+                                .font(.system(size: 56, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                            Text("reps").foregroundStyle(.secondary)
                         }
-                    } else {
-                        HStack(spacing: 16) {
-                            pauseResumeButton
-                            skipButton
-                            cancelButton
-                            awakeButton
-                            backgroundAudioButton
-                        }
+                    }
+                    .padding(.horizontal)
+                }
+                GlassActionButton(tint: .blue, action: {
+                    controller.completeSet(reps: kind == .workout ? pendingReps : nil)
+                }) {
+                    Text(kind.manualAdvanceButtonLabel).font(.headline)
+                }
+            case .finished:
+                EmptyView()
+            }
+
+            if let budget = engine.windowTimeRemaining(at: controller.now) {
+                Label(engine.currentWindow?.isHardCap == true ? "\(SessionFormat.time(budget)) left" : "\(SessionFormat.time(budget)) left in round",
+                      systemImage: "timer")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var phaseLength: TimeInterval {
+        guard let end = engine.state.phaseEnd else { return 1 }
+        return max(1, end.timeIntervalSince(engine.state.phaseStart) - engine.state.phasePausedTotal)
+    }
+
+    private var controls: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                GlassActionButton(tint: .orange, action: controller.togglePause) {
+                    Label(engine.state.isPaused ? "Resume" : "Pause",
+                          systemImage: engine.state.isPaused ? "play.fill" : "pause.fill")
+                        .font(.headline).lineLimit(1).minimumScaleFactor(0.7)
+                }
+                GlassActionButton(tint: .orange, action: controller.skip) {
+                    Label("Skip", systemImage: "forward.end.fill")
+                        .font(.headline).lineLimit(1).minimumScaleFactor(0.7)
+                }
+                moreMenu
+            }
+            GlassActionButton(tint: .red, action: { showEndConfirmation = true }) {
+                Label(kind.endButtonLabel, systemImage: "xmark.circle.fill").font(.headline)
+            }
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            if let step = engine.currentStep {
+                let isSuperset = engine.plan.blocks[step.block].isSuperset
+                Button { controller.addSet() } label: {
+                    Label(isSuperset ? "Add Round" : "Add \(kind.setUnitSingular)", systemImage: "plus.circle")
+                }
+                Button { controller.skipBlock() } label: {
+                    Label(isSuperset ? "Skip Rest of \(kind.supersetActionLabel)" : "Skip Rest of \(kind.itemName)",
+                          systemImage: "forward.frame")
+                }
+                if let index = engine.headlineExerciseIndex() {
+                    Button { swappingExercise = index } label: {
+                        Label("Swap \(kind.itemName)…", systemImage: "arrow.triangle.swap")
                     }
                 }
-                .padding(.horizontal)
-#else
-                HStack(spacing: 8) {
-                    pauseResumeButton
-                    skipButton
-                    cancelButton
-                }
-                .padding(.horizontal)
-#endif
             }
-            .padding(.top)
-        }
-        .onReceive(timer) { _ in
-            sessionElapsed = Date().timeIntervalSince(workoutStartDate)
-            guard !isExiting, !isCompleted, !showRecap, !isPaused else { return }
-            // A `wholeChain` Timed Superset's deadline can pass while the current phase has no
-            // countdown of its own (a manual-advance/rep-based exercise) — watch for that here
-            // rather than only when a phase's own timer expires, so the chain still cuts off on
-            // time even if nobody taps anything.
-            let groupRange = currentGroupRange
-            let groupHead = exercises[groupRange.lowerBound]
-            if groupHead.groupTimeBudget != nil, groupHead.groupTimeBudgetScope == .wholeChain,
-               let endDate = groupRoundEndDate, endDate.timeIntervalSinceNow <= 0 {
-                forceEndChainDueToTimeBudget()
-                return
+            if engine.canUndo {
+                Button { controller.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
             }
-            if currentExercise.isTimeBased || isResting {
-                let now = Date()
-                timeRemaining = max(0, phaseEndDate.timeIntervalSince(now))
-                if timeRemaining <= 0 {
-                    timerExpired()
-                }
-            }
-        }
-        .onAppear {
+            Divider()
+            Button { showPlan = true } label: { Label("Workout Plan", systemImage: "list.bullet.rectangle") }
 #if canImport(UIKit)
-            configureAudioSession()
-            if enableBackgroundAudio {
-                startBackgroundAudioLoop()
-            }
+            Toggle(isOn: $keepScreenAwake) { Label("Keep Screen Awake", systemImage: "bolt") }
+            Toggle(isOn: $enableBackgroundAudio) { Label("Background Audio", systemImage: "speaker.wave.2") }
 #endif
-            workoutStartDate = Date()
-            requestNotificationPermission()
-            startCurrentPhase()
-#if canImport(UIKit)
-            UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
-#endif
-#if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
-            if healthKitEnabled && !connectivity.isWatchReachable {
-                Task {
-                    await healthKitManager.requestAuthorization()
-                    if healthKitManager.isAuthorized {
-                        let config = HealthKitWorkoutManager.workoutConfiguration(for: activityType.rawValue)
-                        await healthKitManager.startWorkoutSession(with: config)
-                        iPhoneOwnsHKSession = true
-                    }
-                }
-            }
-#endif
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.headline)
+                .frame(maxWidth: 56)
+                .padding(.vertical, 12)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active && !isPaused {
-                let remaining = phaseEndDate.timeIntervalSinceNow
-                if (currentExercise.isTimeBased || isResting) && remaining <= 0 {
-                    timerExpired()
-                } else {
-                    timeRemaining = max(0, remaining)
-                }
-            }
-        }
-#if canImport(UIKit)
-        .onChange(of: keepScreenAwake) { _, newValue in
-            UIApplication.shared.isIdleTimerDisabled = newValue
-        }
-        .onChange(of: enableBackgroundAudio) { _, newValue in
-            if newValue {
-                startBackgroundAudioLoop()
-            } else {
-                stopBackgroundAudioLoop()
-            }
-        }
-#endif
-#if canImport(WatchConnectivity)
-        .onChange(of: connectivity.commandSequence) { _, _ in
-            handleWatchWorkoutCommand(connectivity.receivedCommand)
-        }
-#endif
-        .onDisappear {
-            cancelPhaseEndNotification()
-#if canImport(UIKit)
-            stopBackgroundAudioLoop()
-#endif
-#if canImport(HealthKit) && !os(macOS)
-            // Reset forwarded health data from watch
-            if healthKitEnabled {
-                healthKitManager.heartRate = 0
-                healthKitManager.activeCalories = 0
-                healthKitManager.isWorkoutActive = false
-            }
-#endif
-            if audioEngine.isRunning { audioEngine.stop() }
-#if canImport(UIKit)
-            UIApplication.shared.isIdleTimerDisabled = false
-#endif
-        }
-        .overlay(alignment: .bottom) {
-            if showUndoToast {
-                HStack {
-                    Text(kind.setsAddedToastLabel)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Button("Undo") {
-                        undoLastAction()
-                    }
+        .accessibilityLabel("More")
+    }
+
+    @ViewBuilder
+    private var undoToast: some View {
+        if controller.showUndoToast && engine.canUndo {
+            HStack {
+                Text(controller.undoToastText).foregroundStyle(.white)
+                Spacer()
+                Button("Undo", action: controller.undo)
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
                     .bold()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color.black.opacity(0.8))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .padding(.bottom, 24)
-                .padding(.horizontal)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding()
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
-    
-    // MARK: - Recap View
-    
-    private var recapView: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Header
-                    VStack(spacing: 8) {
-                        Image(systemName: recapCompletedNaturally ? "checkmark.circle.fill" : "stop.circle.fill")
-                            .font(.system(size: 48))
-                            .foregroundStyle(recapCompletedNaturally ? .green : .orange)
-                        
-                        Text(recapCompletedNaturally ? kind.recapCompletedTitle : kind.recapEndedTitle)
-                            .font(.title)
-                            .bold()
+
+    private func resetPendingReps() {
+        guard pendingStepIndex != engine.state.stepIndex else { return }
+        pendingStepIndex = engine.state.stepIndex
+        pendingReps = engine.currentExercise?.targetReps
+    }
+}
+
+// MARK: - Components
+
+/// One segment per block (exercise or superset): done, in progress (partially filled), upcoming.
+struct BlockProgressStrip: View {
+    let engine: SessionEngine
+
+    var body: some View {
+        let current = engine.currentStep?.block ?? engine.plan.blocks.count
+        HStack(spacing: 4) {
+            ForEach(engine.plan.blocks.indices, id: \.self) { i in
+                let block = engine.plan.blocks[i]
+                let fraction: Double = i < current ? 1 : (i > current ? 0 :
+                    Double(engine.state.stepIndex - block.firstStep) / Double(max(1, block.endStep - block.firstStep)))
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.secondary.opacity(0.2))
+                        Capsule().fill(block.isSuperset ? Color.purple : Color.green)
+                            .frame(width: geo.size.width * fraction)
                     }
-                    .padding(.top)
-                    
-                    // Stats
-                    VStack(spacing: 16) {
-                        recapRow(icon: "clock", color: .blue, label: "Duration", value: formatTime(recapDuration))
-                        
-                        Divider()
-                        
-                        recapRow(icon: kind.recapItemsIcon, color: .green,
-                                 label: kind.recapItemsLabel, value: "\(recapExercisesCompleted) of \(exercises.count)")
-                        
-                        Divider()
-                        
-                        let totalSets = exercises.indices.reduce(0) { $0 + effectiveSets(at: $1) }
-                        recapRow(icon: kind.recapSetsIcon, color: .purple,
-                                 label: kind.recapSetsLabel, value: "\(recapSetsCompleted) of \(totalSets)")
+                }
+                .frame(height: 6)
+                .frame(maxWidth: .infinity)
+                .layoutPriority(Double(block.endStep - block.firstStep))
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Block \(min(current + 1, engine.plan.blocks.count)) of \(engine.plan.blocks.count)")
+    }
+}
 
-                        Divider()
+struct CountdownRing: View {
+    let remaining: TimeInterval
+    let total: TimeInterval
+    let tint: Color
 
-                        recapRow(icon: kind.recapActiveIcon, color: .green,
-                                 label: kind.recapActiveLabel, value: formatTime(recapActiveTime))
+    var body: some View {
+        ZStack {
+            Circle().stroke(tint.opacity(0.2), lineWidth: 12)
+            Circle()
+                .trim(from: 0, to: max(0, min(1, remaining / total)))
+                .stroke(tint, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.2), value: remaining)
+            Text(SessionFormat.time(remaining))
+                .font(.system(size: 64, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .minimumScaleFactor(0.5)
+                .padding(24)
+        }
+        .frame(width: 220, height: 220)
+    }
+}
 
-                        Divider()
+/// The sets of one exercise in this session: logged ones with their reps/weight, the current
+/// one highlighted, and the ones still to come.
+struct SetTracker: View {
+    let engine: SessionEngine
+    let exerciseIndex: Int
 
-                        recapRow(icon: kind.recapRestIcon, color: .blue,
-                                 label: kind.recapRestLabel, value: formatTime(recapRestTime))
-
-                        if recapExercisesSkipped > 0 {
-                            Divider()
-                            recapRow(icon: "forward.end.fill", color: .orange,
-                                     label: kind.recapItemsSkippedLabel, value: "\(recapExercisesSkipped)")
-                        }
-
-                        if recapRestTimeSkipped > 0 {
-                            Divider()
-                            recapRow(icon: "forward.end.fill", color: .orange,
-                                     label: kind.recapRestSkippedLabel, value: formatTime(recapRestTimeSkipped))
-                        }
-
-#if canImport(HealthKit)
-                        if kind == .workout {
-                        if recapHeartRate > 0 {
-                            Divider()
-                            recapRow(icon: "heart.fill", color: .red,
-                                     label: "Avg Heart Rate", value: "\(Int(recapHeartRate)) BPM")
-                        }
-                        
-                        if recapCalories > 0 {
-                            Divider()
-                            recapRow(icon: "flame.fill", color: .orange,
-                                     label: "Calories", value: "\(Int(recapCalories)) CAL")
-                        }
-                        let zoneEntries = recapZoneEntries
-                        if !zoneEntries.isEmpty {
-                            let totalZoneTime = zoneEntries.reduce(0.0) { $0 + $1.duration }
-                            Divider()
-                            Text("Heart Rate Zones")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            // A 6th (lowest) zone means HealthKitWorkoutManager prepended a resting-HR
-                            // boundary — show it as a distinct "Resting" tier rather than "Zone 1".
-                            // (A person's own custom Health-app zone config could coincidentally also
-                            // have 6 zones; this only affects the label, not the underlying data.)
-                            let hasRestingZone = zoneEntries.count == 6
-                            ForEach(zoneEntries, id: \.zoneIndex) { entry in
-                                if entry.zoneIndex > 0 { Divider() }
-                                let isRestingZone = hasRestingZone && entry.zoneIndex == 0
-                                let zoneNum = hasRestingZone ? entry.zoneIndex : entry.zoneIndex + 1
-                                let color = isRestingZone ? Color.gray : hrZoneColor(zoneNum)
-                                let minBPM = entry.minBPM.map { Int($0) }
-                                let maxBPM = entry.maxBPM.map { Int($0) }
-                                let bpmLabel: String = {
-                                    switch (minBPM, maxBPM) {
-                                    case (nil, let hi?): return "<\(hi) bpm"
-                                    case (let lo?, nil): return ">\(lo) bpm"
-                                    case (let lo?, let hi?): return "\(lo)–\(hi) bpm"
-                                    default: return ""
-                                    }
-                                }()
-                                VStack(spacing: 6) {
-                                    HStack(spacing: 10) {
-                                        RoundedRectangle(cornerRadius: 2)
-                                            .fill(color)
-                                            .frame(width: 4, height: 20)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(isRestingZone ? "Resting" : "Zone \(zoneNum)")
-                                                .font(.subheadline)
-                                            if !bpmLabel.isEmpty {
-                                                Text(bpmLabel)
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        Spacer()
-                                        Text(formatTime(entry.duration))
-                                            .font(.subheadline)
-                                            .bold()
-                                            .foregroundStyle(entry.duration > 0 ? .primary : .secondary)
-                                            .monospacedDigit()
-                                    }
-                                    GeometryReader { geo in
-                                        ZStack(alignment: .leading) {
-                                            RoundedRectangle(cornerRadius: 3)
-                                                .fill(Color.secondary.opacity(0.2))
-                                                .frame(height: 6)
-                                            if totalZoneTime > 0 && entry.duration > 0 {
-                                                RoundedRectangle(cornerRadius: 3)
-                                                    .fill(color)
-                                                    .frame(width: geo.size.width * CGFloat(entry.duration / totalZoneTime), height: 6)
-                                            }
-                                        }
-                                    }
-                                    .frame(height: 6)
-                                }
+    var body: some View {
+        let steps = engine.plan.steps.enumerated().filter { $0.element.kind == .work && $0.element.exerciseIndex == exerciseIndex }
+        let records = engine.records(forExercise: exerciseIndex)
+        if steps.count > 1 {
+            VStack(spacing: 0) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { n, item in
+                    let record = records.first { $0.round == item.element.round }
+                    let isCurrent = item.offset == engine.state.stepIndex
+                    HStack {
+                        Text("\(n + 1)")
+                            .font(.subheadline.bold())
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(isCurrent ? Color.accentColor : Color.secondary.opacity(0.15)))
+                            .foregroundStyle(isCurrent ? Color.white : Color.primary)
+                        if let record {
+                            if record.skipped {
+                                Text("Skipped").foregroundStyle(.secondary)
+                            } else {
+                                Text(recordText(record))
                             }
-                        } else if recapHeartRate > 0 {
-#if os(iOS)
-                            // Zone data lands after HealthKit finishes processing the workout —
-                            // a few seconds on-device, longer if a watch session has to sync it
-                            // over first. Let the user know it's still coming rather than looking
-                            // like the feature silently failed.
-                            Divider()
-                            Text("Heart Rate Zones")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text("Calculating your zone breakdown — this can take a few seconds to appear.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-#endif
+                            Spacer()
+                            Image(systemName: record.skipped ? "forward.end" : "checkmark.circle.fill")
+                                .foregroundStyle(record.skipped ? Color.secondary : Color.green)
+                        } else {
+                            Text(targetText).foregroundStyle(isCurrent ? Color.primary : Color.secondary)
+                            Spacer()
                         }
-                        }
-#endif
                     }
-                    .padding()
-#if canImport(UIKit)
-                    .background(Color(uiColor: .systemGray6))
-#endif
-                    .cornerRadius(16)
-                    .padding(.horizontal)
-                    
-                    GlassActionButton(tint: .green, action: {
-                        showRecap = false
-                        isActive = false
-                    }) {
-                        Text("Done")
-                            .font(.headline)
-                    }
-                    .padding(.horizontal)
-                }
-                .padding(.bottom)
-            }
-            .navigationTitle("Summary")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .onAppear {
-                if recapCompletedNaturally {
-                    playCompletionSound()
+                    .font(.subheadline)
+                    .padding(.vertical, 6)
+                    if n < steps.count - 1 { Divider() }
                 }
             }
+            .padding(.horizontal)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
-    
-    private func recapRow(icon: String, color: Color, label: String, value: String) -> some View {
+
+    private var targetText: String {
+        let e = engine.exercises[exerciseIndex]
+        if e.isTimeBased { return SessionFormat.time(e.exerciseDuration) + (e.weight.map { _ in " · " + SessionFormat.weight(e.weight, unit: e.weightUnit) } ?? "") }
+        return "\(SessionFormat.reps(e.targetReps, max: e.targetRepsMax)) · \(SessionFormat.weight(e.weight, unit: e.weightUnit))"
+    }
+
+    private func recordText(_ r: SetRecord) -> String {
+        var parts: [String] = []
+        if let reps = r.reps { parts.append("\(reps) reps") } else { parts.append(SessionFormat.time(r.activeDuration)) }
+        parts.append(SessionFormat.weight(r.weight, unit: r.weightUnit))
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// During rest: quickly correct what the set you just finished actually was.
+struct LastSetLogCard: View {
+    let record: SetRecord
+    let onChange: (Int?, Double?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Log \(record.exerciseName.isEmpty ? "last set" : record.exerciseName) · Set \(record.round)")
+                .font(.subheadline.bold())
+            if let reps = record.reps {
+                Stepper("\(reps) reps", value: Binding(get: { reps }, set: { onChange(max(0, $0), record.weight) }), in: 0...999)
+            }
+            if let weight = record.weight, weight > 0 {
+                let step = Progression.increment(for: record.weightUnit, weight: weight)
+                Stepper(SessionFormat.weight(weight, unit: record.weightUnit),
+                        value: Binding(get: { weight }, set: { onChange(record.reps, max(0, $0)) }),
+                        in: 0...2000, step: step)
+            }
+        }
+        .padding()
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+#if canImport(HealthKit) && canImport(UIKit)
+struct HealthMetricsStrip: View {
+    @ObservedObject var manager: HealthKitWorkoutManager
+
+    var body: some View {
         HStack {
-            Image(systemName: icon)
-                .foregroundStyle(color)
-                .frame(width: 28)
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .bold()
+            metric("heart.fill", .red, "BPM", manager.heartRate > 0 ? "\(Int(manager.heartRate))" : "--")
+            Divider().frame(height: 44)
+            metric("waveform.path.ecg", manager.currentHRZoneIndex.map { HRZoneColors.color($0 + 1) } ?? .secondary, "Zone",
+                   manager.currentHRZoneIndex.map { "Z\($0 + 1)" } ?? "--")
+            Divider().frame(height: 44)
+            metric("flame.fill", .orange, "Calories", manager.activeCalories > 0 ? "\(Int(manager.activeCalories))" : "--")
         }
-    }
-    
-    /// Effective "sets" for recap purposes: a lone exercise's own `sets`, or a chain member's round count.
-    private func effectiveSets(at index: Int) -> Int {
-        exercises.roundCount(for: exercises.supersetGroupRange(containing: index))
+        .padding()
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    /// The HR zone breakdown to show in the recap: data forwarded from the watch (which owns the
-    /// HealthKit session whenever a watch is involved), falling back to reading the iPhone's own
-    /// finished workout when the iPhone recorded the session directly (no watch).
-    private var recapZoneEntries: [HRZoneRecapEntry] {
-#if canImport(WatchConnectivity)
-        // Read from the connectivity manager — a @StateObject that outlives the recap branch —
-        // rather than from view @State. The watch only sends .zoneSummary once its HealthKit
-        // session has finished, which lands after showRecap flips and workoutContent (along
-        // with the onChange that used to catch it) has left the view hierarchy.
-        if !connectivity.completedZoneSummary.isEmpty { return connectivity.completedZoneSummary }
+    private func metric(_ icon: String, _ tint: Color, _ label: String, _ value: String) -> some View {
+        VStack(spacing: 4) {
+            Label(label, systemImage: icon).font(.caption).foregroundStyle(tint)
+            Text(value).font(.system(.title, design: .rounded).bold()).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
 #endif
-        if !recapZoneSummary.isEmpty { return recapZoneSummary }
-#if canImport(HealthKit) && os(iOS)
-        // `finishedWorkout` lives on the shared HealthKitWorkoutManager singleton and is only
-        // reset by startWorkoutSession() — a workout that never enables HealthKit never calls
-        // that, so without this check a *previous* HealthKit-tracked workout's zones would
-        // still be sitting there and get shown here as if they belonged to this one.
-        if #available(iOS 27.0, *),
-           healthKitEnabled,
-           let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate),
-           let zoneGroups = healthKitManager.finishedWorkout?.zoneGroupsByType,
-           let zoneGroup = zoneGroups[hrType] {
-            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
-            return zoneGroup.zoneDurations.enumerated().map { index, zoneDuration in
-                HRZoneRecapEntry(
-                    zoneIndex: index,
-                    duration: zoneDuration.duration,
-                    minBPM: zoneDuration.zone.minimum?.doubleValue(for: bpmUnit),
-                    maxBPM: zoneDuration.zone.maximum?.doubleValue(for: bpmUnit)
-                )
-            }
-        }
-#endif
-        return []
-    }
 
-    private func captureRecap(completedNaturally: Bool) {
-        recapDuration = Date().timeIntervalSince(workoutStartDate)
-        recapCompletedNaturally = completedNaturally
-
-        if !completedNaturally {
-            // Count whatever time had already elapsed in the in-progress phase before the
-            // workout was cut short — otherwise Active + Rest Time would fall short of Duration.
-            if isResting {
-                recapRestTime += max(0, (currentRestDurationOverride ?? currentExercise.restDuration) - timeRemaining)
-            } else if currentExercise.isTimeBased {
-                recapActiveTime += max(0, currentExercise.exerciseDuration - timeRemaining)
-            } else {
-                recapActiveTime += max(0, Date().timeIntervalSince(phaseStartDate))
-            }
-        }
-
-        if completedNaturally {
-            recapExercisesCompleted = exercises.count
-            recapSetsCompleted = exercises.indices.reduce(0) { $0 + effectiveSets(at: $1) }
-        } else {
-            recapExercisesCompleted = min(currentExerciseIndex + 1, exercises.count)
-            // Count sets (rounds) completed in finished groups + the in-progress group
-            var sets = 0
-            let groupRange = currentGroupRange
-            for i in 0..<groupRange.lowerBound {
-                sets += effectiveSets(at: i)
-            }
-            for i in groupRange {
-                if i < currentExerciseIndex {
-                    // Already performed this round for this group member
-                    sets += currentSet
-                } else if i == currentExerciseIndex {
-                    sets += max(0, currentSet - (isResting ? 0 : 1))
-                } else {
-                    // Hasn't performed the in-progress round yet, only prior ones
-                    sets += max(0, currentSet - 1)
-                }
-            }
-            recapSetsCompleted = sets
-        }
-        
-#if canImport(HealthKit) && !os(macOS)
-        // Use average heart rate over the workout, falling back to last reading
-        if !heartRateReadings.isEmpty {
-            recapHeartRate = heartRateReadings.reduce(0, +) / Double(heartRateReadings.count)
-        } else {
-            recapHeartRate = healthKitManager.heartRate
-        }
-        recapCalories = healthKitManager.activeCalories
-#endif
-    }
-    
-#if canImport(WatchConnectivity)
-    private func sendStateToWatch() {
-        let command = WorkoutCommand.updatePhase(
-            exerciseIndex: currentExerciseIndex,
-            set: currentSet,
-            isResting: isResting,
-            isPaused: isPaused,
-            phaseEndDate: (currentExercise.isTimeBased || isResting) ? phaseEndDate : nil,
-            isCompleted: isCompleted
-        )
-        WatchConnectivityManager.shared.sendWorkoutCommand(command)
-    }
-    
-    /// Handle workout commands from Apple Watch
-    private func handleWatchWorkoutCommand(_ command: WorkoutCommand?) {
-        guard let command else { return }
-        
-        switch command {
-        case .start:
-            // Watch started the workout, already handled in SessionBuilderView
-            break
-            
-        case .updatePhase:
-            // iPhone is the timer authority — ignore any updatePhase from watch
-            break
-            
-        case .pause:
-            // Watch user tapped pause — pause and send authoritative state back
-            let remaining = max(0, phaseEndDate.timeIntervalSinceNow)
-            pausedTimeRemaining = remaining
-            timeRemaining = remaining
-            isPaused = true
-            cancelPhaseEndNotification()
-            sendStateToWatch()
-            
-        case .resume:
-            // Watch user tapped resume — resume and send authoritative state back
-            if let remaining = pausedTimeRemaining {
-                phaseEndDate = Date().addingTimeInterval(remaining)
-                timeRemaining = remaining
-                pausedTimeRemaining = nil
-                schedulePhaseEndNotification(in: remaining)
-            }
-            isPaused = false
-            sendStateToWatch()
-            
-        case .stop:
-            // Watch ended the workout — show recap
-            captureRecap(completedNaturally: false)
-            beginExit()
-            showRecap = true
-            
-        case .repsComplete:
-            // Watch user tapped the manual-advance button — advance and send state back
-            manualAdvanceTapped()
-
-        case .skipPhase:
-            // Watch user tapped "Skip" — advance and send state back, same as the iPhone's own Skip button
-            skipPhaseTapped()
-            
-        case .healthData(let heartRate, let activeCalories, let hrZoneIndex):
-            // Receive live health data forwarded from the watch
-            healthKitManager.heartRate = heartRate
-            healthKitManager.activeCalories = activeCalories
-            healthKitManager.currentHRZoneIndex = hrZoneIndex
-            // Accumulate for average calculation in recap
-            if heartRate > 0 {
-                heartRateReadings.append(heartRate)
-            }
-            // Mark as active so the metrics view shows
-            if !healthKitManager.isWorkoutActive {
-                healthKitManager.isWorkoutActive = true
-            }
-
-        case .zoneSummary(let zones, let workoutID):
-            // Forwarded from the watch once it ends the HealthKit session it owns. Only accept
-            // it if it belongs to the workout currently running — see WatchConnectivityManager's
-            // matching guard on `completedZoneSummary` for why a stale one can arrive here at all.
-            guard workoutID == connectivity.currentWorkoutID else { return }
-            recapZoneSummary = zones
-
-        case .wake:
-            break
-
-        case .updateWeight, .updateTargetReps:
-            // iPhone/Mac is the source of truth for weight/reps changes — it never receives these from the watch.
-            break
-        }
-    }
-#endif
-    
-    private func beginExit() {
-        // Freeze UI and dismiss any modals
-        isExiting = true
-        isPaused = true
-        isCompleted = true
-        isResting = false
-
-        // Stop notifications and audio synchronously
-        cancelPhaseEndNotification()
-#if canImport(UIKit)
-        stopBackgroundAudioLoop()
-#endif
-#if canImport(WatchConnectivity)
-        WatchConnectivityManager.shared.sendWorkoutCommand(.stop)
-#endif
-#if os(iOS) && canImport(HealthKit) && canImport(WatchConnectivity)
-        if iPhoneOwnsHKSession {
-            iPhoneOwnsHKSession = false
-            Task { await healthKitManager.endWorkout() }
-        }
-#endif
-        if audioEngine.isRunning { audioEngine.stop() }
-#if canImport(UIKit)
-        UIApplication.shared.isIdleTimerDisabled = false
-#endif
-        // Navigation back to builder is handled by the recap view's "Done" button
-    }
-    
-    func startCurrentPhase() {
-        if isCompleted { return }
-        pausedTimeRemaining = nil
-        phaseStartDate = Date()
-        if !isResting {
-            // Any rest-duration override only applies to the rest phase it was computed for.
-            currentRestDurationOverride = nil
-            // Re-arm the Timed Superset deadline whenever a fresh round begins — except a
-            // `wholeChain` budget, which is armed once at round 1 and shared across every
-            // round, so it's left alone once the chain is already underway.
-            let groupRange = currentGroupRange
-            if currentExerciseIndex == groupRange.lowerBound, let budget = exercises[groupRange.lowerBound].groupTimeBudget {
-                let scope = exercises[groupRange.lowerBound].groupTimeBudgetScope
-                if scope == .perRound || currentSet == 1 {
-                    groupRoundEndDate = Date().addingTimeInterval(budget)
-                }
-            }
-        }
-        var duration: TimeInterval = 0
-        if isResting {
-            duration = currentRestDurationOverride ?? currentExercise.restDuration
-        } else if currentExercise.isTimeBased {
-            duration = currentExercise.exerciseDuration
-        } else {
-            // Manual-advance: no countdown; nothing to schedule
-            timeRemaining = 0
-#if canImport(WatchConnectivity)
-            sendStateToWatch()
-#endif
-            return
-        }
-        phaseEndDate = Date().addingTimeInterval(duration)
-        timeRemaining = max(0, duration)
-        schedulePhaseEndNotification(in: duration)
-#if canImport(WatchConnectivity)
-        sendStateToWatch()
-#endif
-    }
-    
-    func timerExpired() {
-        if isExiting { return }
-        if isCompleted { return }
-        cancelPhaseEndNotification()
-        playSound()
-
-        if isResting {
-            recordRestPhaseEnding()
-            isResting = false
-            if restAdvancesWithinGroup {
-                // Rest was between two linked exercises, not after the group's last one —
-                // just move on to the next chain member, no round-loop logic involved.
-                restAdvancesWithinGroup = false
-                currentExerciseIndex += 1
-                startCurrentPhase()
-            } else {
-                advancePastRest(groupRange: currentGroupRange)
-            }
-        } else {
-            advancePastCompletedSet()
-        }
-    }
-
-    /// Manually skip the current phase — an exercise's active timer/set, or a rest period —
-    /// and advance immediately. Reuses `timerExpired()` so behavior (including its guards
-    /// against skipping while exiting or already completed) matches a phase finishing naturally.
-    func skipPhaseTapped() {
-        isSkippingCurrentPhase = true
-        timerExpired()
-#if canImport(WatchConnectivity)
-        sendStateToWatch()
-#endif
-    }
-
-    /// Records the rest phase that's about to end (naturally or via skip) toward the recap
-    /// breakdown. Must run before `isResting`/`currentExerciseIndex` change, while `currentExercise`
-    /// still refers to the exercise this rest followed.
-    private func recordRestPhaseEnding() {
-        let wasSkipped = isSkippingCurrentPhase
-        isSkippingCurrentPhase = false
-        let configuredDuration = currentRestDurationOverride ?? currentExercise.restDuration
-        recapRestTime += max(0, configuredDuration - timeRemaining)
-        if wasSkipped {
-            recapRestTimeSkipped += max(0, timeRemaining)
-        }
-    }
-
-    /// Records the exercise phase that's about to end (naturally, via skip, or via the manual-advance
-    /// button) toward the recap breakdown. Must run before `currentExerciseIndex`/`currentSet` change.
-    /// Timed exercises measure elapsed time from the countdown (which already accounts for pauses);
-    /// manual-advance exercises have no countdown, so wall-clock time since the phase started is used instead.
-    private func recordActivePhaseEnding() {
-        let wasSkipped = isSkippingCurrentPhase
-        isSkippingCurrentPhase = false
-        if currentExercise.isTimeBased {
-            recapActiveTime += max(0, currentExercise.exerciseDuration - timeRemaining)
-        } else {
-            recapActiveTime += max(0, Date().timeIntervalSince(phaseStartDate))
-        }
-        if wasSkipped {
-            recapExercisesSkipped += 1
-        }
-    }
-
-    /// Called when the current exercise's work phase finishes (a timer expiring, or a manual-advance tap).
-    /// Superset/circuit partners each use their own `restDuration` between them (0 means continue
-    /// straight into the next one); the group's last exercise separately rests between rounds.
-    private func advancePastCompletedSet() {
-        recordActivePhaseEnding()
-        let groupRange = currentGroupRange
-        // Timed Superset: the group shares one time budget per round instead of each member's own
-        // `restDuration` — members always run back-to-back, and any budget left over once the last
-        // one finishes becomes the round's rest. See `groupTimeBudget`.
-        let groupTimeBudget = exercises[groupRange.lowerBound].groupTimeBudget
-
-        if currentExerciseIndex < groupRange.upperBound {
-            // More linked exercises remain this round.
-            if groupTimeBudget == nil, currentExercise.restDuration > 0 {
-                isResting = true
-                restAdvancesWithinGroup = true
-                startCurrentPhase()
-            } else {
-                currentExerciseIndex += 1
-                isResting = false
-                startCurrentPhase()
-            }
-            return
-        }
-
-        // Finished the last exercise in the group for this round.
-        if let groupTimeBudget {
-            if exercises[groupRange.lowerBound].groupTimeBudgetScope == .perRound {
-                let remaining = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? groupTimeBudget)
-                if remaining > 0 {
-                    currentRestDurationOverride = remaining
-                    isResting = true
-                    startCurrentPhase()
-                } else {
-                    advancePastRest(groupRange: groupRange)
-                }
-            } else {
-                // Whole-chain budget: no rest between rounds — loop straight into the next one.
-                // Only once the LAST round finishes does whatever's left of the shared budget
-                // become a holding "rest" (same mechanic as `perRound`'s leftover-becomes-rest),
-                // so the countdown stays visible and the Skip button can end the chain early;
-                // the `.onReceive(timer)` watchdog ends it automatically if time runs out first.
-                let roundCount = exercises.roundCount(for: groupRange)
-                if currentSet < roundCount {
-                    advancePastRest(groupRange: groupRange)
-                } else {
-                    let remaining = max(0, groupRoundEndDate?.timeIntervalSinceNow ?? 0)
-                    if remaining > 0 {
-                        currentRestDurationOverride = remaining
-                        isResting = true
-                        startCurrentPhase()
-                    } else {
-                        advancePastRest(groupRange: groupRange)
-                    }
-                }
-            }
-        } else if currentExercise.restDuration > 0 {
-            isResting = true
-            startCurrentPhase()
-        } else {
-            advancePastRest(groupRange: groupRange)
-        }
-    }
-
-    /// Called once a between-round (or between-group) rest finishes, or immediately if there was none.
-    /// Loops back to the first exercise in the group for another round, or advances past the group entirely.
-    private func advancePastRest(groupRange: ClosedRange<Int>) {
-        let roundCount = exercises.roundCount(for: groupRange)
-        if currentSet < roundCount {
-            // Another round remains — loop back to the first exercise in the group.
-            currentSet += 1
-            currentExerciseIndex = groupRange.lowerBound
-        } else {
-            // Finished all rounds for this group — advance past it entirely.
-            currentSet = 1
-            currentExerciseIndex = groupRange.upperBound + 1
-            if currentExerciseIndex >= exercises.count {
-                isCompleted = true
-                timeRemaining = 0
-#if canImport(WatchConnectivity)
-                sendStateToWatch()
-#endif
-                captureRecap(completedNaturally: true)
-                showRecap = true
-                return
-            }
-        }
-        isResting = false
-        startCurrentPhase()
-    }
-
-    /// Called by the `.onReceive(timer)` watchdog when a `wholeChain` Timed Superset's shared
-    /// deadline passes while mid-exercise or mid-round (including during a manual-advance/rep-based
-    /// phase, which has no countdown of its own to expire naturally). Ends the chain immediately,
-    /// wherever it is, and proceeds to whatever comes after it — matching a real MetCon time cap.
-    private func forceEndChainDueToTimeBudget() {
-        cancelPhaseEndNotification()
-        playSound()
-        if isResting {
-            recordRestPhaseEnding()
-        } else {
-            recordActivePhaseEnding()
-        }
-        isResting = false
-        restAdvancesWithinGroup = false
-        let groupRange = currentGroupRange
-        // Force `advancePastRest` down its "finished all rounds" branch regardless of which
-        // round was actually in progress.
-        currentSet = exercises.roundCount(for: groupRange)
-        advancePastRest(groupRange: groupRange)
-    }
-
-    func advanceWorkout() {
-        cancelPhaseEndNotification()
-        advancePastCompletedSet()
-    }
-    
-    func manualAdvanceTapped() {
-        // immediate advance for manual-advance exercises, with undo capture
-        guard !currentExercise.isTimeBased else { return }
-        let prevExerciseIndex = currentExerciseIndex
-        let prevSet = currentSet
-        let prevWasResting = isResting
-        let prevActiveTime = recapActiveTime
-        // Determine whether this tap will advance to next exercise immediately (no rest)
-        let willAdvanceExercise: Bool = {
-            if currentSet < currentExercise.sets { return false }
-            if currentExercise.restDuration > 0 { return false }
-            return true
-        }()
-        advanceWorkout()
-#if canImport(WatchConnectivity)
-        sendStateToWatch()
-#endif
-        undoAction = WorkoutUndoAction(exerciseIndex: prevExerciseIndex, setBefore: prevSet, wasResting: prevWasResting, advancedExercise: willAdvanceExercise, activeTimeBefore: prevActiveTime)
-        withAnimation { showUndoToast = true }
-        // Auto-hide after 4 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-            withAnimation { showUndoToast = false }
-        }
-    }
-
-    func undoLastAction() {
-        guard let action = undoAction else { return }
-        cancelPhaseEndNotification()
-        // Revert to the captured state
-        currentExerciseIndex = action.exerciseIndex
-        currentSet = action.setBefore
-        isResting = false
-        isCompleted = false
-        // Undo the recap breakdown's contribution from the set that's being undone.
-        recapActiveTime = action.activeTimeBefore
-        phaseStartDate = Date()
-
-        // For manual-advance, return to pre-rest state (no active timer)
-        timeRemaining = 0
-        // Clear undo and hide toast
-        undoAction = nil
-        withAnimation { showUndoToast = false }
-    }
-
-    /// Opens the mid-session weight-adjustment sheet, seeded with the current exercise's weight.
-    func beginEditingWeight() {
-        weightEditUnit = currentExercise.weightUnit
-        if let weight = currentExercise.weight {
-            weightEditText = weight.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(weight))" : String(format: "%.1f", weight)
-        } else {
-            weightEditText = ""
-        }
-        showWeightEditor = true
-    }
-
-    /// Applies a mid-session weight change to the exercise currently in progress (e.g. a set turned
-    /// out too heavy/light), mirrors it to the watch (which otherwise has no way to learn about it),
-    /// and reports it back to the builder/saved routine via `onExerciseAdjusted`.
-    func updateCurrentExerciseWeight(_ weight: Double?, unit: WeightUnit) {
-        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
-        guard exercises.indices.contains(safeIndex) else { return }
-        exercises[safeIndex].weight = weight
-        exercises[safeIndex].weightUnit = unit
-#if canImport(WatchConnectivity)
-        WatchConnectivityManager.shared.sendWorkoutCommand(.updateWeight(exerciseIndex: safeIndex, weight: weight, weightUnit: unit))
-#endif
-        onExerciseAdjusted(exercises[safeIndex])
-    }
-
-    /// Opens the mid-session target-reps-adjustment sheet, seeded with the current exercise's reps.
-    func beginEditingReps() {
-        if let reps = currentExercise.targetReps {
-            repsEditText = "\(reps)"
-            if let repsMax = currentExercise.targetRepsMax, repsMax != reps {
-                repsEditIsRange = true
-                repsMaxEditText = "\(repsMax)"
-            } else {
-                repsEditIsRange = false
-                repsMaxEditText = ""
-            }
-        } else {
-            repsEditText = ""
-            repsEditIsRange = false
-            repsMaxEditText = ""
-        }
-        showRepsEditor = true
-    }
-
-    /// Applies a mid-session target-reps change to the exercise currently in progress, mirrors it to
-    /// the watch, and reports it back to the builder/saved routine via `onExerciseAdjusted`.
-    func updateCurrentExerciseReps(_ reps: Int?, repsMax: Int?) {
-        let safeIndex = min(max(0, currentExerciseIndex), max(0, exercises.count - 1))
-        guard exercises.indices.contains(safeIndex) else { return }
-        exercises[safeIndex].targetReps = reps
-        exercises[safeIndex].targetRepsMax = repsMax
-#if canImport(WatchConnectivity)
-        WatchConnectivityManager.shared.sendWorkoutCommand(.updateTargetReps(exerciseIndex: safeIndex, reps: reps, repsMax: repsMax))
-#endif
-        onExerciseAdjusted(exercises[safeIndex])
-    }
-
-    /// Formats target reps as "10 reps" or, when a range's upper bound differs, "8–10 reps".
-    func repsRangeText(reps: Int, repsMax: Int?) -> String {
-        if let repsMax, repsMax != reps {
-            return "\(reps)–\(repsMax) reps"
-        }
-        return "\(reps) reps"
-    }
-
-    private var weightEditorSheet: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    HStack(spacing: 8) {
-                        TextField("0", text: $weightEditText)
-                            .focused($isWeightEditFieldFocused)
-#if os(iOS)
-                            .keyboardType(.decimalPad)
-#endif
-                        Picker("Unit", selection: $weightEditUnit) {
-                            Text("LB").tag(WeightUnit.lbs)
-                            Text("KG").tag(WeightUnit.kg)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 120)
-                    }
-                }
-            }
-            .navigationTitle("Adjust Weight")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            .scrollDismissesKeyboard(.interactively)
-#endif
-            .toolbar {
-#if os(iOS)
-                // The decimal pad has no return key, so give it an explicit way to dismiss.
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { isWeightEditFieldFocused = false }
-                }
-#endif
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showWeightEditor = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let parsed = Double(weightEditText)
-                        updateCurrentExerciseWeight(parsed.map { max(0, $0) }, unit: weightEditUnit)
-                        showWeightEditor = false
-                    }
-                }
-            }
-        }
-    }
-
-    private var repsEditorSheet: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("0", text: $repsEditText)
-#if os(iOS)
-                        .keyboardType(.numberPad)
-#endif
-                    Toggle("Range", isOn: $repsEditIsRange)
-                    if repsEditIsRange {
-                        TextField("Max reps", text: $repsMaxEditText)
-#if os(iOS)
-                            .keyboardType(.numberPad)
-#endif
-                    }
-                }
-            }
-            .navigationTitle("Adjust Target Reps")
-#if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-#endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showRepsEditor = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        let reps = Int(repsEditText).map { max(0, $0) }
-                        let repsMax = repsEditIsRange ? Int(repsMaxEditText).map { max(0, $0) } : nil
-                        // A max below the lower bound isn't a valid range — drop it rather than swap,
-                        // so "Save" never silently reinterprets what was typed.
-                        let validatedMax = (reps != nil && repsMax != nil && repsMax! >= reps!) ? repsMax : nil
-                        updateCurrentExerciseReps(reps, repsMax: validatedMax)
-                        showRepsEditor = false
-                    }
-                }
-            }
-        }
-    }
-
-    func formatTime(_ time: TimeInterval) -> String {
-        let hours = Int(time) / 3600
-        let minutes = (Int(time) % 3600) / 60
-        let seconds = Int(time) % 60
-
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%d:%02d", minutes, seconds)
-        }
-    }
-
-    private func hrZoneColor(_ zone: Int) -> Color {
+enum HRZoneColors {
+    static func color(_ zone: Int) -> Color {
         switch zone {
         case 1: return .blue
         case 2: return .teal
@@ -1455,379 +553,150 @@ struct SessionView: View {
         default: return .red
         }
     }
+}
 
-#if canImport(UIKit)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+// MARK: - Editor sheets
 
-    private var healthKitMetricsView: some View {
-        VStack(spacing: 12) {
-            Text("Health Metrics")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            
-            HStack(spacing: 20) {
-                heartRateMetric
+struct WeightEditorSheet: View {
+    let exercise: Exercise
+    let onSave: (Double?, WeightUnit) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var unit: WeightUnit = .lbs
+    @FocusState private var focused: Bool
 
-                Divider()
-                    .frame(height: 60)
-
-                zoneMetric
-
-                Divider()
-                    .frame(height: 60)
-
-                caloriesMetric
-            }
-        }
-        .padding()
-        .background(Color(uiColor: .systemGray6))
-        .cornerRadius(16)
-    }
-    
-    private var heartRateMetric: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "heart.fill")
-                    .foregroundStyle(.red)
-                Text("BPM")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            if healthKitManager.heartRate > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text("\(Int(healthKitManager.heartRate))")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .monospacedDigit()
+    var body: some View {
+        NavigationStack {
+            Form {
+                HStack(spacing: 8) {
+                    TextField("0", text: $text)
+                        .focused($focused)
+#if os(iOS)
+                        .keyboardType(.decimalPad)
+#endif
+                    Picker("Unit", selection: $unit) {
+                        Text("LB").tag(WeightUnit.lbs)
+                        Text("KG").tag(WeightUnit.kg)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 120)
                 }
-            } else {
-                Text("--")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
             }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var zoneMetric: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "waveform.path.ecg")
-                    .foregroundStyle(healthKitManager.currentHRZoneIndex.map { hrZoneColor($0 + 1) } ?? .secondary)
-                Text("Zone")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            if let zoneIndex = healthKitManager.currentHRZoneIndex {
-                Text("Z\(zoneIndex + 1)")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(hrZoneColor(zoneIndex + 1))
-            } else {
-                Text("--")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var caloriesMetric: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "flame.fill")
-                    .foregroundStyle(.orange)
-                Text("Calories")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            
-            if healthKitManager.activeCalories > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text("\(Int(healthKitManager.activeCalories))")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .monospacedDigit()
+            .navigationTitle("Adjust Weight")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(Double(text).map { max(0, $0) }, unit)
+                        dismiss()
+                    }
                 }
-            } else {
-                Text("--")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
+            }
+            .onAppear {
+                unit = exercise.weightUnit
+                if let w = exercise.weight { text = w.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(w))" : String(format: "%.1f", w) }
+                focused = true
             }
         }
-        .frame(maxWidth: .infinity)
+        .presentationDetents([.medium])
     }
+}
 
-    private var awakeButton: some View {
-        GlassActionButton(tint: keepScreenAwake ? .green : .gray, action: { keepScreenAwake.toggle() }) {
-            HStack {
-                Image(systemName: keepScreenAwake ? "bolt.fill" : "bolt.slash")
-                Text(keepScreenAwake ? "Awake On" : "Awake Off")
-            }
-            .font(.headline)
-        }
-    }
+struct RepsEditorSheet: View {
+    let exercise: Exercise
+    let onSave: (Int?, Int?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var isRange = false
+    @State private var maxText = ""
 
-    private var backgroundAudioButton: some View {
-        GlassActionButton(tint: enableBackgroundAudio ? .green : .gray, action: { enableBackgroundAudio.toggle() }) {
-            HStack {
-                Image(systemName: enableBackgroundAudio ? "speaker.wave.2.fill" : "speaker.slash")
-                Text(enableBackgroundAudio ? "BG Audio On" : "BG Audio Off")
-            }
-            .font(.headline)
-        }
-    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Reps (blank = AMRAP)", text: $text)
+#if os(iOS)
+                    .keyboardType(.numberPad)
 #endif
-
-    private var pauseResumeButton: some View {
-        GlassActionButton(tint: .orange, action: {
-            if isPaused {
-                // RESUMING: recalculate phaseEndDate from stored remaining time
-                if let remaining = pausedTimeRemaining {
-                    phaseEndDate = Date().addingTimeInterval(remaining)
-                    timeRemaining = remaining
-                    pausedTimeRemaining = nil
-                    schedulePhaseEndNotification(in: remaining)
+                Toggle("Range", isOn: $isRange)
+                if isRange {
+                    TextField("Max reps", text: $maxText)
+#if os(iOS)
+                        .keyboardType(.numberPad)
+#endif
                 }
-                isPaused = false
-            } else {
-                // PAUSING: capture current remaining time
-                let remaining = max(0, phaseEndDate.timeIntervalSince(Date()))
-                pausedTimeRemaining = remaining
-                timeRemaining = remaining
-                isPaused = true
-                cancelPhaseEndNotification()
             }
-#if canImport(WatchConnectivity)
-            WatchConnectivityManager.shared.sendWorkoutCommand(isPaused ? .pause : .resume)
-            sendStateToWatch()
+            .navigationTitle("Adjust Target Reps")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
 #endif
-        }) {
-            HStack {
-                Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                Text(isPaused ? "Resume" : "Pause")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let reps = Int(text).map { max(0, $0) }
+                        let upper = isRange ? Int(maxText).map { max(0, $0) } : nil
+                        // A max below the lower bound isn't a valid range — drop it rather than swap.
+                        let valid = (reps != nil && upper != nil && upper! >= reps!) ? upper : nil
+                        onSave(reps, valid)
+                        dismiss()
+                    }
+                }
             }
-            .font(.headline)
+            .onAppear {
+                text = exercise.targetReps.map(String.init) ?? ""
+                if let m = exercise.targetRepsMax { isRange = true; maxText = String(m) }
+            }
         }
+        .presentationDetents([.medium])
     }
+}
 
-    private var cancelButton: some View {
-        GlassActionButton(tint: .red, action: { showCancelConfirmation = true }) {
-            HStack {
-                Image(systemName: "xmark.circle.fill")
-                Text("Cancel")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .font(.headline)
-        }
-    }
+/// "The machine's taken" — rename this exercise for today's session only.
+struct SwapExerciseSheet: View {
+    let kind: SessionKind
+    let currentName: String
+    let onSave: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
 
-    /// Skips the rest of the current exercise timer/set, or the current rest period, and
-    /// advances immediately — same effect a natural completion would have.
-    private var skipButton: some View {
-        GlassActionButton(tint: .orange, action: skipPhaseTapped) {
-            HStack {
-                Image(systemName: "forward.end.fill")
-                Text("Skip")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(kind.itemNameFieldLabel, text: $name)
+                } footer: {
+                    Text("Only this session changes — your saved routine keeps \(currentName). Sets, reps and weight stay the same; adjust them from the session screen if needed.")
+                }
             }
-            .font(.headline)
-        }
-    }
-    
-#if canImport(UIKit)
-    private func configureAudioSession() {
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-        try? audioSession.setActive(true, options: [])
-    }
+            .navigationTitle("Swap \(kind.itemName)")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
 #endif
-    
-#if canImport(UIKit)
-    private func startBackgroundAudioLoop() {
-        guard !isBackgroundLoopRunning else { return }
-        let sampleRate: Double = 44100
-        let durationSeconds: Double = 1.0
-        let frames = AVAudioFrameCount(sampleRate * durationSeconds)
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        do {
-            if !audioEngine.attachedNodes.contains(backgroundPlayerNode) {
-                audioEngine.attach(backgroundPlayerNode)
-                audioEngine.connect(backgroundPlayerNode, to: audioEngine.mainMixerNode, format: format)
-            }
-            if !audioEngine.isRunning {
-                try audioEngine.start()
-            }
-        } catch {
-            print("Audio engine start failed: \(error)")
-            return
-        }
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
-        buffer.frameLength = frames
-        if let channel = buffer.floatChannelData?[0] {
-            // Fill with very low-amplitude noise to keep the session alive
-            let count = Int(buffer.frameLength)
-            for i in 0..<count { channel[i] = 0.00001 * ((i % 2 == 0) ? 1.0 : -1.0) }
-        }
-        backgroundPlayerNode.play()
-        backgroundPlayerNode.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
-        isBackgroundLoopRunning = true
-    }
-
-    private func stopBackgroundAudioLoop() {
-        guard isBackgroundLoopRunning else { return }
-        backgroundPlayerNode.stop()
-        isBackgroundLoopRunning = false
-    }
-#endif
-    
-#if canImport(UserNotifications)
-    func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-    
-    func schedulePhaseEndNotification(in interval: TimeInterval) {
-        guard interval > 0 else { return }
-        let content = UNMutableNotificationContent()
-        content.title = isResting ? kind.restCompleteNotificationTitle : kind.activeCompleteNotificationTitle
-        content.body = isResting
-            ? "Time to start the next \(kind.setUnitSingular.lowercased())."
-            : (currentExercise.isTimeBased ? "Move to \(kind.restPhaseLabel.lowercased()) or next \(kind.itemName.lowercased())." : "")
-        content.sound = UNNotificationSound.default
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-        let request = UNNotificationRequest(identifier: "exercisePhaseEnd", content: content, trigger: trigger)
-
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: ["exercisePhaseEnd"])
-        center.add(request)
-    }
-    
-    func cancelPhaseEndNotification() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["exercisePhaseEnd"])
-    }
-#else
-    func requestNotificationPermission() {}
-    func schedulePhaseEndNotification(in interval: TimeInterval) {}
-    func cancelPhaseEndNotification() {}
-#endif
-
-    private func finishWorkoutAndExit() {
-        // Centralized teardown and navigation back to builder
-        isPaused = true
-        isCompleted = true
-        isResting = false
-        cancelPhaseEndNotification()
-#if canImport(UIKit)
-        stopBackgroundAudioLoop()
-#endif
-        if audioEngine.isRunning { audioEngine.stop() }
-#if canImport(UIKit)
-        UIApplication.shared.isIdleTimerDisabled = false
-#endif
-        DispatchQueue.main.async {
-            isActive = false
-        }
-    }
-    
-    /// Plays a rising three-tone celebration sound for workout completion.
-    /// Uses AVAudioPlayer with an in-memory WAV so it's independent of the shared audioEngine.
-    func playCompletionSound() {
-        let sampleRate: Int = 44100
-        let bitsPerSample: Int = 16
-        let numChannels: Int = 1
-
-        // Three ascending tones: C6, E6, G6 — each ~0.18s with brief gaps
-        let toneLength = Int(Double(sampleRate) * 0.18)
-        let gapLength = Int(Double(sampleRate) * 0.04)
-        let totalFrames = toneLength * 3 + gapLength * 2
-
-        // Generate 16-bit PCM samples
-        let frequencies: [Double] = [1047.0, 1319.0, 1568.0]
-        let amplitude: Double = 0.4
-        var pcmData = [Int16](repeating: 0, count: totalFrames)
-        var offset = 0
-        for (noteIndex, freq) in frequencies.enumerated() {
-            for i in 0..<toneLength {
-                let envelope = min(1.0, min(Double(i) / 300, Double(toneLength - i) / 300))
-                let phase = Double(i) * freq / Double(sampleRate)
-                pcmData[offset + i] = Int16(sin(phase * 2 * .pi) * amplitude * envelope * Double(Int16.max))
-            }
-            offset += toneLength
-            if noteIndex < 2 {
-                offset += gapLength // already zeroed
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Swap") { onSave(name.trimmingCharacters(in: .whitespaces)); dismiss() }
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
         }
-
-        // Build a minimal WAV file in memory
-        let dataSize = totalFrames * numChannels * (bitsPerSample / 8)
-        var wav = Data()
-        wav.append(contentsOf: "RIFF".utf8)
-        wav.append(withUnsafeBytes(of: UInt32(36 + dataSize).littleEndian) { Data($0) })
-        wav.append(contentsOf: "WAVE".utf8)
-        wav.append(contentsOf: "fmt ".utf8)
-        wav.append(withUnsafeBytes(of: UInt32(16).littleEndian) { Data($0) })       // chunk size
-        wav.append(withUnsafeBytes(of: UInt16(1).littleEndian) { Data($0) })        // PCM
-        wav.append(withUnsafeBytes(of: UInt16(numChannels).littleEndian) { Data($0) })
-        wav.append(withUnsafeBytes(of: UInt32(sampleRate).littleEndian) { Data($0) })
-        let byteRate = sampleRate * numChannels * (bitsPerSample / 8)
-        wav.append(withUnsafeBytes(of: UInt32(byteRate).littleEndian) { Data($0) })
-        let blockAlign = numChannels * (bitsPerSample / 8)
-        wav.append(withUnsafeBytes(of: UInt16(blockAlign).littleEndian) { Data($0) })
-        wav.append(withUnsafeBytes(of: UInt16(bitsPerSample).littleEndian) { Data($0) })
-        wav.append(contentsOf: "data".utf8)
-        wav.append(withUnsafeBytes(of: UInt32(dataSize).littleEndian) { Data($0) })
-        pcmData.withUnsafeBufferPointer { wav.append(UnsafeBufferPointer(start: UnsafeRawPointer($0.baseAddress!).assumingMemoryBound(to: UInt8.self), count: dataSize)) }
-
-        do {
-            let player = try AVAudioPlayer(data: wav)
-            completionSoundPlayer = player  // retain
-            player.play()
-        } catch {
-            print("Completion sound failed: \(error)")
-        }
+        .presentationDetents([.medium])
     }
+}
 
-    func playSound() {
-        let sampleRate: Double = 44100
-        // C5 (523 Hz) — pleasant and clear without being harsh
-        let frequency: Float = 523.0
-        let amplitude: Float = 0.22
-        let duration: Double = 0.22
-        let frameCount = AVAudioFrameCount(sampleRate * duration)
+// MARK: - Small utilities
 
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return }
-        buffer.frameLength = frameCount
+struct IdentifiableIndex: Identifiable { let id: Int }
 
-        let samples = UnsafeMutableBufferPointer(start: buffer.floatChannelData![0], count: Int(frameCount))
-        for i in 0..<Int(frameCount) {
-            // Hanning envelope: smooth attack and release, no click or pop
-            let t = Double(i) / Double(frameCount - 1)
-            let envelope = Float(0.5 * (1.0 - cos(2.0 * .pi * t)))
-            let phase = Float(i) * frequency / Float(sampleRate)
-            samples[i] = sin(phase * 2 * .pi) * amplitude * envelope
-        }
-
-        let playerNode = AVAudioPlayerNode()
-        audioEngine.attach(playerNode)
-        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
-
-        if !audioEngine.isRunning {
-            do {
-                try audioEngine.start()
-            } catch {
-                print("Audio engine start failed: \(error)")
-                return
-            }
-        }
-        playerNode.play()
-        playerNode.scheduleBuffer(buffer, at: nil, options: []) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                playerNode.stop()
-            }
-        }
+extension Binding where Value == Int? {
+    /// Lets an optional index drive `.sheet(item:)`.
+    var asIdentifiable: Binding<IdentifiableIndex?> {
+        Binding<IdentifiableIndex?>(
+            get: { wrappedValue.map(IdentifiableIndex.init) },
+            set: { wrappedValue = $0?.id }
+        )
     }
 }

@@ -84,8 +84,10 @@ enum WorkoutCommand: Codable, Equatable {
     /// already started — the receiver compares this id against the current workout's id and
     /// discards anything that doesn't match, rather than displaying stale zone data.
     case start(exercises: [Exercise], kind: SessionKind, healthKitEnabled: Bool, activityType: String?, workoutID: UUID)
-    case updatePhase(exerciseIndex: Int, set: Int, isResting: Bool, isPaused: Bool,
-                     phaseEndDate: Date?, isCompleted: Bool)
+    /// iPhone → watch: the complete session (exercise list + engine state). The watch compiles
+    /// the same `WorkoutPlan` and derives every label from it, so the two can't drift apart.
+    /// Replaces the old index/flag-based `updatePhase`, `updateWeight` and `updateTargetReps`.
+    case sync(SessionSync)
     case pause
     case resume
     case stop
@@ -103,13 +105,8 @@ enum WorkoutCommand: Codable, Equatable {
     /// the session can read `HKWorkout.zoneGroupsByType`, so the data has to be forwarded as plain values.
     /// `workoutID` must match the `.start` that began the session it was computed from.
     case zoneSummary(zones: [HRZoneRecapEntry], workoutID: UUID)
-    /// Sent from iPhone/Mac to watch when the weight for an exercise is adjusted mid-session
-    /// (e.g. realizing a set is too heavy/light and changing it for the next set/round).
-    /// `weight` of `nil` clears it. iPhone/Mac remains the source of truth — the watch only mirrors this.
-    case updateWeight(exerciseIndex: Int, weight: Double?, weightUnit: WeightUnit)
-    /// Sent from iPhone/Mac to watch when the target reps for an exercise are adjusted mid-session.
-    /// `reps` of `nil` clears it. iPhone/Mac remains the source of truth — the watch only mirrors this.
-    case updateTargetReps(exerciseIndex: Int, reps: Int?, repsMax: Int?)
+    /// Watch → iPhone: undo the last action, mirroring the iPhone's own Undo.
+    case undo
 }
 
 /// A single HR zone's time-in-zone, computed by the device that owns the HealthKit workout session and
@@ -129,6 +126,7 @@ enum WCContextKey {
     static let activityType = "activityType"
     static let hrZoneSettings = "hrZoneSettings"
     static let sessionKind = "sessionKind"
+    static let sessionSync = "sessionSync"
 }
 
 /// Supported HealthKit workout activity types for the picker

@@ -10,6 +10,10 @@ Features
 - Screen Wake - Keep your device screen active during workouts
 - Import/Export - Save and share your workout routines
 - Completion Notifications - Receive a notification when your routine finishes
+- Supersets & Timed Supersets - Link exercises into circuits with per-round or whole-chain time budgets
+- Set Logging & Progression - Log actual reps and weight; see last time and get "go heavier" suggestions
+- Workout Preview - See the whole session block by block, with an estimated time, before you start
+- Swap / Skip / Add Mid-Workout - Change plans on the fly when equipment is taken
 
 ## Use Cases
 
@@ -38,6 +42,8 @@ Expandable Exercise Timer does not transmit any data to the developer or to any 
 **Health data (HealthKit).** With your permission, the app reads your heart rate, active energy burned, and date of birth (used only to calculate your maximum heart rate for heart-rate-zone display) during a workout. When a workout finishes, it writes that workout session to the Health app. This data is read from and written to Apple Health only — it never leaves your device or your iCloud account, and the developer has no access to it. You can revoke this access at any time in Settings > Privacy & Security > Health.
 
 **Workout routines.** Your custom exercise routines are stored locally on your device using standard iOS storage, and are only included in iCloud/device backups you've configured yourself. They are not sent to the developer or any third party.
+
+**Workout history.** Sets you log (exercise name, reps, weight, timing) are kept in a file on your device so the app can show "last time" and suggest progression. It's never sent anywhere, and you can clear it in Settings.
 
 **Watch connectivity.** Data exchanged between the iPhone and Watch apps (timer state, heart rate readings) stays on your paired devices via Apple's WatchConnectivity framework and is never transmitted externally.
 
