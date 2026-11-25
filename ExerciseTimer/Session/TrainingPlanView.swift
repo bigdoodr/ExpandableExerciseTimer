@@ -224,7 +224,10 @@ struct TrainingPlanView: View {
                 Button {
                     start(plan: plan, session: session, exercises: exercises)
                 } label: {
-                    Label("Start", systemImage: "play.fill").font(.headline)
+                    Label("Start", systemImage: "play.fill")
+                        .font(.headline)
+                        // Inside a List row the symbol otherwise picks up the accent (blue) tint.
+                        .foregroundStyle(.white)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
