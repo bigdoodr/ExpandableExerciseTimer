@@ -89,6 +89,12 @@ enum Progression {
         return nil
     }
 
+    /// `hint(for:last:)` in the context of the whole session: no hints inside a Timed Superset.
+    static func hint(for exercises: [Exercise], at index: Int, last: LastPerformance?) -> ProgressionHint? {
+        guard exercises.indices.contains(index), !exercises.isInTimedChain(index) else { return nil }
+        return hint(for: exercises[index], last: last)
+    }
+
     /// Epley estimated one-rep max.
     static func estimatedOneRepMax(weight: Double, reps: Int) -> Double {
         guard reps > 0, weight > 0 else { return 0 }

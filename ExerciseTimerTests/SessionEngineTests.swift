@@ -468,3 +468,40 @@ struct TrainingPlanTests {
         #expect(TrainingPlanStore(directory: dir).plan == plan)
     }
 }
+
+@MainActor
+struct Phase1FollowUpTests {
+    @Test func noProgressionHintsInsideTimedSuperset() {
+        var a = reps("Burpees", reps: 10)
+        a.chainRepeatCount = 10
+        a.groupTimeBudget = 720
+        a.groupTimeBudgetScope = .wholeChain
+        let pushups = reps("Push-Up", reps: 15, linked: true)
+        let ex = [a, pushups, reps("Plain Push-Up", reps: 15)]
+        let hitAll = LastPerformance(date: t0, sets: [SetRecord(exerciseID: UUID(), exerciseIndex: 1, exerciseName: "Push-Up", round: 1,
+                                                                reps: 15, weight: nil, weightUnit: .lbs, activeDuration: 20, skipped: false, completedAt: t0)])
+        #expect(ex.isInTimedChain(1))
+        #expect(Progression.hint(for: ex, at: 1, last: hitAll) == nil)
+        #expect(Progression.hint(for: ex, at: 2, last: hitAll) == .increaseReps(to: 16))
+        let plan = TrainingPlan(name: "T", startDate: t0, weekdays: [1, 2, 3, 4, 5, 6, 7], workouts: [PlanWorkout(name: "M", exercises: ex)])
+        let adjusted = plan.exercises(for: plan.sessions()[0], lastPerformance: { _ in hitAll })
+        #expect(adjusted[1].targetReps == 15)
+        #expect(adjusted[2].targetReps == 16)
+    }
+
+    @Test func blockProgressAndWeights() {
+        let ex = [reps("Bench", sets: 2, rest: 60), reps("OHP", sets: 3, rest: 60), reps("Row"), reps("Curl")]
+        var engine = SessionEngine(exercises: ex, now: t0)
+        engine.completeSet(now: at(10))           // Bench set 1 → rest
+        engine.skip(now: at(11))                  // → Bench set 2
+        #expect(engine.blockProgress(0) == 2.0 / 4.0)
+        #expect(engine.blockProgress(1) == 0)
+        engine.completeSet(now: at(20))           // → rest after Bench (headline OHP), still block 0
+        #expect(engine.headlineExerciseIndex() == 1)
+        #expect(engine.blockProgress(0) == 3.0 / 4.0)
+        let w = engine.blockWeights()
+        #expect(w.count == 4)
+        #expect(abs(w.reduce(0, +) - 1) < 1e-9)
+        #expect(w[1] > w[3])
+    }
+}

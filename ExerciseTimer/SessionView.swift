@@ -383,30 +383,33 @@ struct SessionView: View {
 // MARK: - Components
 
 /// One segment per block (exercise or superset): done, in progress (partially filled), upcoming.
+/// Widths are proportional to each block's length, computed explicitly — `layoutPriority` on
+/// greedy segments let the first segments take all the width and hid the rest.
 struct BlockProgressStrip: View {
     let engine: SessionEngine
+    private let spacing: CGFloat = 4
 
     var body: some View {
-        let current = engine.currentStep?.block ?? engine.plan.blocks.count
-        HStack(spacing: 4) {
-            ForEach(engine.plan.blocks.indices, id: \.self) { i in
-                let block = engine.plan.blocks[i]
-                let fraction: Double = i < current ? 1 : (i > current ? 0 :
-                    Double(engine.state.stepIndex - block.firstStep) / Double(max(1, block.endStep - block.firstStep)))
-                GeometryReader { geo in
+        let blocks = engine.plan.blocks
+        let weights = engine.blockWeights()
+        let current = engine.currentStep?.block ?? blocks.count
+        GeometryReader { geo in
+            let usable = max(0, geo.size.width - spacing * CGFloat(max(0, blocks.count - 1)))
+            HStack(spacing: spacing) {
+                ForEach(blocks.indices, id: \.self) { i in
+                    let width = usable * CGFloat(weights.indices.contains(i) ? weights[i] : 0)
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.secondary.opacity(0.2))
-                        Capsule().fill(block.isSuperset ? Color.purple : Color.green)
-                            .frame(width: geo.size.width * fraction)
+                        Capsule().fill(blocks[i].isSuperset ? Color.purple : Color.green)
+                            .frame(width: width * CGFloat(engine.blockProgress(i)))
                     }
+                    .frame(width: width, height: 6)
                 }
-                .frame(height: 6)
-                .frame(maxWidth: .infinity)
-                .layoutPriority(Double(block.endStep - block.firstStep))
             }
         }
+        .frame(height: 6)
         .accessibilityElement()
-        .accessibilityLabel("Block \(min(current + 1, engine.plan.blocks.count)) of \(engine.plan.blocks.count)")
+        .accessibilityLabel("Block \(min(current + 1, blocks.count)) of \(blocks.count)")
     }
 }
 

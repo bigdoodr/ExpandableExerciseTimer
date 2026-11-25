@@ -203,7 +203,7 @@ final class SessionController: ObservableObject {
 
     func progressionHint(forExercise index: Int) -> ProgressionHint? {
         guard engine.exercises.indices.contains(index) else { return nil }
-        return Progression.hint(for: engine.exercises[index], last: lastPerformance(forExercise: index))
+        return Progression.hint(for: engine.exercises, at: index, last: lastPerformance(forExercise: index))
     }
 
     // MARK: Internals

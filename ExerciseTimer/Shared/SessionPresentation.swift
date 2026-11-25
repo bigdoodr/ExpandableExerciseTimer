@@ -49,6 +49,23 @@ extension SessionEngine {
         return "\(kind.supersetActionLabel) · \(position) of \(block.exerciseRange.count)"
     }
 
+    /// How far through each block the session is (0…1), for the progress strip.
+    func blockProgress(_ blockIndex: Int) -> Double {
+        guard plan.blocks.indices.contains(blockIndex) else { return 0 }
+        let current = currentStep?.block ?? plan.blocks.count
+        if blockIndex < current { return 1 }
+        if blockIndex > current { return 0 }
+        let block = plan.blocks[blockIndex]
+        return Double(state.stepIndex - block.firstStep) / Double(max(1, block.endStep - block.firstStep))
+    }
+
+    /// Each block's share of the strip, proportional to its number of steps.
+    func blockWeights() -> [Double] {
+        let sizes = plan.blocks.map { Double(max(1, $0.endStep - $0.firstStep)) }
+        let total = sizes.reduce(0, +)
+        return total > 0 ? sizes.map { $0 / total } : []
+    }
+
     func phaseLabel(kind: SessionKind) -> String {
         switch phaseStyle() {
         case .timedWork: return kind.activePhaseLabel

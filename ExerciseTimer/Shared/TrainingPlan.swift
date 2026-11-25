@@ -177,7 +177,8 @@ struct TrainingPlan: Codable, Equatable, Identifiable {
                     e.weight = lastWeight
                     e.weightUnit = last?.sets.first?.weightUnit ?? e.weightUnit
                 }
-                switch Progression.hint(for: e, last: last) {
+                let hint = exercises.isInTimedChain(i) ? nil : Progression.hint(for: e, last: last)
+                switch hint {
                 case .increaseWeight(let to, let unit)?: e.weight = to; e.weightUnit = unit
                 case .increaseReps(let to)?:
                     if let max = e.targetRepsMax { e.targetRepsMax = Swift.max(max, to) } else { e.targetReps = to }
@@ -212,11 +213,14 @@ struct TrainingPlan: Codable, Equatable, Identifiable {
         let phase = WeekPhase.forWeek(session.week)
         var lines = ["Week \(session.week) · \(phase.title): \(phase.summary)"]
         guard workouts.indices.contains(session.workoutIndex), phase != .deload else { return lines }
-        for e in workouts[session.workoutIndex].exercises where !e.isTimeBased {
-            if let hint = Progression.hint(for: e, last: lastPerformance(e)), case .increaseWeight(let to, let unit) = hint {
+        let template = workouts[session.workoutIndex].exercises
+        for (i, e) in template.enumerated() where !e.isTimeBased {
+            switch Progression.hint(for: template, at: i, last: lastPerformance(e)) {
+            case .increaseWeight(let to, let unit)?:
                 lines.append("\(e.name): go up to \(SessionFormat.weight(to, unit: unit)) — you hit every rep last time.")
-            } else if let hint = Progression.hint(for: e, last: lastPerformance(e)), case .increaseReps(let to) = hint {
+            case .increaseReps(let to)?:
                 lines.append("\(e.name): aim for \(to) reps.")
+            default: break
             }
         }
         return lines
