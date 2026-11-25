@@ -224,7 +224,7 @@ struct OnboardingView: View {
                     title: "Preview, Swap, Skip & Add",
                     description: "Preview a routine block by block before you start. Mid-workout, the ••• menu lets you swap an exercise when equipment is taken, skip the rest of an exercise or superset, or add a set or round."
                 )
-            )
+            ),
             WhatsNewItem(
                 introducedIn: AppRelease(version: [3, 0], build: 1),
                 step: OnboardingStep(
