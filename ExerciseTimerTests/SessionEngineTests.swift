@@ -374,3 +374,97 @@ struct ProjectionTests {
         #expect(engine.nextEventDate == at(120))
     }
 }
+
+@MainActor
+struct TrainingPlanTests {
+    private var utc: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+    /// Monday 2026-11-30, 00:00 UTC.
+    private var monday: Date { utc.date(from: DateComponents(year: 2026, month: 11, day: 30))! }
+
+    @Test func sessionsAlternateWorkoutsAcrossWeeksLikeABA_BAB() {
+        let plan = PlanGenerator.make(.init(goal: .muscle, equipment: .dumbbells, weekdays: [2, 4, 6], length: .short, startDate: monday))
+        let sessions = plan.sessions(calendar: utc)
+        #expect(sessions.count == 12)
+        #expect(sessions.map(\.workoutIndex).prefix(6) == [0, 1, 0, 1, 0, 1])
+        #expect(sessions.map(\.week) == [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4])
+        #expect(utc.component(.weekday, from: sessions[1].date) == 4) // Wednesday
+        #expect(sessions.last!.date == utc.date(byAdding: .day, value: 25, to: monday))
+        #expect(plan.workouts.map(\.name) == ["Full Body A", "Full Body B"])
+        #expect(plan.workouts[0].exercises.count == 5)
+    }
+
+    @Test func splitFollowsDaysPerWeek() {
+        let four = PlanGenerator.make(.init(weekdays: [2, 3, 5, 6], startDate: monday))
+        #expect(four.workouts.map(\.name) == ["Upper", "Lower"])
+        let five = PlanGenerator.make(.init(weekdays: [2, 3, 4, 5, 6], startDate: monday))
+        #expect(five.workouts.map(\.name) == ["Push", "Pull", "Legs"])
+    }
+
+    @Test func strengthPlanIsFiveByFiveOnMainLifts() {
+        let plan = PlanGenerator.make(.init(goal: .strength, equipment: .fullGym, weekdays: [2, 4, 6], length: .long, startDate: monday))
+        let a = plan.workouts[0].exercises
+        #expect(a[0].sets == 5 && a[0].targetReps == 5 && a[0].targetRepsMax == nil)
+        #expect(a[3].sets == 3 && a[3].targetReps == 8 && a[3].targetRepsMax == 10)
+    }
+
+    @Test func weeklyWaveAdjustsSetsRepsAndDeloadWeight() {
+        var bench = reps("Bench", sets: 3, reps: 8, weight: 100)
+        bench.targetRepsMax = 12
+        let plan = TrainingPlan(name: "T", startDate: monday, weekdays: [2], workouts: [PlanWorkout(name: "A", exercises: [bench])])
+        let s = plan.sessions(calendar: utc)
+        let none: (Exercise) -> LastPerformance? = { _ in nil }
+        #expect(plan.exercises(for: s[0], lastPerformance: none)[0].sets == 3)
+        #expect(plan.exercises(for: s[1], lastPerformance: none)[0].targetReps == 12)
+        #expect(plan.exercises(for: s[2], lastPerformance: none)[0].sets == 4)
+        let deload = plan.exercises(for: s[3], lastPerformance: none)[0]
+        #expect(deload.sets == 2)
+        #expect(deload.weight == 90)
+    }
+
+    @Test func overloadAddsARoundToSupersets() {
+        var a = reps("A")
+        a.chainRepeatCount = 3
+        let plan = TrainingPlan(name: "T", startDate: monday, weekdays: [2], workouts: [PlanWorkout(name: "A", exercises: [a, reps("B", linked: true)])])
+        let week3 = plan.exercises(for: plan.sessions(calendar: utc)[2], lastPerformance: { _ in nil })
+        #expect(week3[0].chainRepeatCount == 4)
+        #expect(week3[1].sets == 1)
+    }
+
+    @Test func sessionAdaptsToWhatWasLogged() {
+        var squat = reps("Goblet Squat", sets: 3, reps: 8)
+        squat.targetRepsMax = 10
+        let plan = TrainingPlan(name: "T", startDate: monday, weekdays: [2, 4], workouts: [PlanWorkout(name: "A", exercises: [squat])])
+        let hitTop = LastPerformance(date: monday, sets: (1...3).map { r in
+            SetRecord(exerciseID: squat.id, exerciseIndex: 0, exerciseName: "Goblet Squat", round: r, reps: 10,
+                      weight: 50, weightUnit: .lbs, activeDuration: 30, skipped: false, completedAt: monday)
+        })
+        let next = plan.exercises(for: plan.sessions(calendar: utc)[1], lastPerformance: { _ in hitTop })
+        #expect(next[0].weight == 55) // carried 50 forward, then +5 for hitting every rep
+        #expect(plan.note(for: plan.sessions(calendar: utc)[1], lastPerformance: { _ in hitTop }).count == 2)
+    }
+
+    @Test func completionTracksTaggedWorkouts() {
+        let plan = PlanGenerator.make(.init(weekdays: [2, 4, 6], startDate: monday))
+        var history: [CompletedWorkout] = []
+        #expect(plan.nextSession(history: history, calendar: utc)?.index == 0)
+        history.append(CompletedWorkout(date: monday, kind: .workout, routineName: nil, duration: 1, completedNaturally: true,
+                                        records: [], planSession: PlanSessionRef(planID: plan.id, index: 0)))
+        history.append(CompletedWorkout(date: monday, kind: .workout, routineName: nil, duration: 1, completedNaturally: true,
+                                        records: [], planSession: PlanSessionRef(planID: UUID(), index: 1)))
+        #expect(plan.completedIndices(in: history) == [0])
+        #expect(plan.nextSession(history: history, calendar: utc)?.index == 1)
+    }
+
+    @Test func oldHistoryWithoutPlanFieldStillDecodes() throws {
+        let json = #"[{"id":"\#(UUID())","date":0,"kind":"workout","duration":10,"completedNaturally":true,"records":[]}]"#
+        let decoded = try JSONDecoder().decode([CompletedWorkout].self, from: Data(json.utf8))
+        #expect(decoded[0].planSession == nil)
+    }
+
+    @Test func planStoreRoundTrips() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let plan = PlanGenerator.make(.init(startDate: monday))
+        TrainingPlanStore(directory: dir).save(plan)
+        #expect(TrainingPlanStore(directory: dir).plan == plan)
+    }
+}

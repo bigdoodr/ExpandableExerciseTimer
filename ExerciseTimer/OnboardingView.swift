@@ -225,6 +225,24 @@ struct OnboardingView: View {
                     description: "Preview a routine block by block before you start. Mid-workout, the ••• menu lets you swap an exercise when equipment is taken, skip the rest of an exercise or superset, or add a set or round."
                 )
             )
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [3, 0], build: 1),
+                step: OnboardingStep(
+                    symbol: "calendar",
+                    color: .green,
+                    title: "4-Week Plans",
+                    description: "The new Plan tab builds a progressive four-week plan from your goal, training days and equipment — or runs a program like the Perfect Home Workout or a classic 5×5. Each week builds on the last, and every session adjusts to the reps and weight you logged."
+                )
+            ),
+            WhatsNewItem(
+                introducedIn: AppRelease(version: [3, 0], build: 1),
+                step: OnboardingStep(
+                    symbol: "folder.fill.badge.plus",
+                    color: .purple,
+                    title: "More Built-In Routines",
+                    description: "New in Routines: Athlean-X's Perfect Chest, Back, Shoulder, Leg and Biceps workouts, the Perfect Home Workout (beginner and advanced), a classic 5×5, the Bodyweight Recommended Routine, and a 6-minute bodyweight chest finisher."
+                )
+            ),
         ])
 
         return items.sorted { $0.introducedIn < $1.introducedIn }

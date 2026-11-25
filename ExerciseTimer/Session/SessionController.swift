@@ -17,6 +17,7 @@ import HealthKit
 final class SessionController: ObservableObject {
     let kind: SessionKind
     let routineName: String?
+    let planSession: PlanSessionRef?
     let workoutID: UUID
 
     @Published private(set) var engine: SessionEngine
@@ -43,11 +44,12 @@ final class SessionController: ObservableObject {
     private var phoneOwnsHealthKitSession = false
     #endif
 
-    init(kind: SessionKind, exercises: [Exercise], routineName: String? = nil,
+    init(kind: SessionKind, exercises: [Exercise], routineName: String? = nil, planSession: PlanSessionRef? = nil,
          healthKitEnabled: Bool, activityType: WorkoutActivityOption,
          history: WorkoutHistoryStore? = nil, now: Date = Date()) {
         self.kind = kind
         self.routineName = routineName
+        self.planSession = planSession
         // Not a default argument: those are evaluated outside the main actor.
         self.history = history ?? WorkoutHistoryStore.shared
         self.engine = SessionEngine(exercises: exercises, now: now)
@@ -252,7 +254,8 @@ final class SessionController: ObservableObject {
 
         let workout = CompletedWorkout(date: engine.state.startedAt, kind: kind, routineName: routineName,
                                        duration: summary.duration, completedNaturally: summary.completedNaturally,
-                                       records: summary.records)
+                                       records: summary.records,
+                                       planSession: summary.setsCompleted > 0 ? planSession : nil)
         milestones = Milestones.find(in: workout, history: history.workouts)
         if kind == .workout { history.add(workout) }
     }

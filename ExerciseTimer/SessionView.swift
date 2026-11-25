@@ -37,24 +37,24 @@ struct SessionView: View {
 
     // Split per platform combo — `#if` inside one parameter list isn't reliably parsed.
 #if canImport(UIKit) && canImport(HealthKit)
-    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, keepScreenAwake: Binding<Bool>, enableBackgroundAudio: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption, routineName: String? = nil) {
+    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, keepScreenAwake: Binding<Bool>, enableBackgroundAudio: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption, routineName: String? = nil, planSession: PlanSessionRef? = nil) {
         self.kind = kind
         self._isActive = isActive
         self._keepScreenAwake = keepScreenAwake
         self._enableBackgroundAudio = enableBackgroundAudio
-        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, healthKitEnabled: healthKitEnabled, activityType: activityType))
+        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, planSession: planSession, healthKitEnabled: healthKitEnabled, activityType: activityType))
     }
 #elseif canImport(HealthKit)
-    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption, routineName: String? = nil) {
+    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, healthKitEnabled: Bool, activityType: WorkoutActivityOption, routineName: String? = nil, planSession: PlanSessionRef? = nil) {
         self.kind = kind
         self._isActive = isActive
-        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, healthKitEnabled: healthKitEnabled, activityType: activityType))
+        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, planSession: planSession, healthKitEnabled: healthKitEnabled, activityType: activityType))
     }
 #else
-    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, routineName: String? = nil) {
+    init(kind: SessionKind, exercises: [Exercise], isActive: Binding<Bool>, routineName: String? = nil, planSession: PlanSessionRef? = nil) {
         self.kind = kind
         self._isActive = isActive
-        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, healthKitEnabled: false, activityType: .functionalStrengthTraining))
+        self._controller = StateObject(wrappedValue: SessionController(kind: kind, exercises: exercises, routineName: routineName, planSession: planSession, healthKitEnabled: false, activityType: .functionalStrengthTraining))
     }
 #endif
 

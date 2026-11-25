@@ -65,9 +65,40 @@ WatchWorkoutEngine (watch):    rebuilds the same SessionEngine from each Session
 - **Block progress strip** across the top, plus a countdown ring.
 - History is stored on-device in `Application Support/WorkoutHistory.json` (capped at 500 workouts) and can be cleared in Settings.
 
+## 4-week plans (Plan tab)
+
+- **Model** (`Shared/TrainingPlan.swift`, unit-tested):
+  - A `TrainingPlan` holds workouts rotated in order across chosen weekdays, for 4 weeks. Two workouts on Mon/Wed/Fri give A B A / B A B.
+  - Sessions are computed, not stored. A finished workout is credited to its session through `CompletedWorkout.planSession`.
+- **Weekly wave**: Week 1 Base → Week 2 Build (top of rep range) → Week 3 Overload (+1 set or round) → Week 4 Deload (−1 set, about 10% lighter).
+  - Built-in programs that have their own progression turn the wave off.
+- **Adapts to logs**: before each session, weights carry forward from your last logged sets, and double-progression hints are applied.
+  - The "Training Note" on the Up Next card explains what changed and why.
+- **Three ways to create a plan**:
+  - **Build One**: goal (strength / muscle / general), equipment (bodyweight / dumbbells / gym), training days, and 5 or 7 exercises. 2–3 days gives full body A/B, 4 days upper/lower, 5 or more push/pull/legs.
+  - **Programs**: Perfect Home Workout (beginner / advanced), Classic 5×5, or Perfect PPL Split.
+  - **My Routines**: rotate saved routines.
+- **Start** loads the adjusted session into the Exercises tab. From there, Preview and Start work as usual.
+
+## New built-in routines (researched in the built-in browser)
+
+| Routine | Source |
+|---|---|
+| Perfect Chest / Back / Shoulder / Leg / Biceps Workout | learn.athleanx.com free articles: summary tables, plus the leg summary image |
+| Perfect Home Workout A & B, Beginner & Advanced (16 one-minute exercises, no rest; 4-week A/B calendar) | learn.athleanx.com one-month home plan |
+| Classic 5×5 A / B | stronglifts.com quick-start guide |
+| Bodyweight Recommended Routine (pairs plus core triplet, progression-based) | r/bodyweightfitness wiki mirror |
+| 6-Minute Bodyweight Chest | learn.athleanx.com |
+
+Notes:
+
+- athleanx.com's paid programs are behind a paywall. Only free articles were used, and each routine credits its source and links back to it (like the existing PPL routines).
+- reddit.com is blocked in the built-in browser, so the Recommended Routine came from the community's GitHub mirror.
+- The Perfect Triceps workout's summary is an image I couldn't find, so it wasn't added.
+
 ## Tests
 
-`ExerciseTimerTests/SessionEngineTests.swift` (27 tests) covers:
+`ExerciseTimerTests/SessionEngineTests.swift` (36 tests, including 9 for training plans) covers:
 
 - plan shapes
 - background catch-up
@@ -87,7 +118,7 @@ The engine files are plain Foundation. These tests were run on Swift 6.1 (Linux)
 ## Not built yet (ideas)
 
 - Watch: log reps with the Digital Crown before confirming, and add an Undo button. The `.undo` command already exists.
-- A 4-week progressive plan generator from goals, schedule and equipment, like Fitness+. History now provides the data it would need.
+- Plan: reminders/notifications on training days; swapping a plan day; carrying over a missed week.
 - An on-device Foundation Models "training note": a pre-workout preview and a post-workout summary of progression.
 - Equipment tags on exercises, plus "similar exercise" suggestions for Swap.
 - Live Activity / Dynamic Island countdown, driven by `SessionEngine.nextEventDate`.

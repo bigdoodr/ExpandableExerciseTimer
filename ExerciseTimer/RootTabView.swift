@@ -9,6 +9,7 @@ import HealthKit
 enum AppTab: Hashable {
     case exercises
     case timers
+    case plan
     case routines
     case settings
 }
@@ -20,6 +21,9 @@ struct RoutineLoadRequest: Equatable {
     let routine: Routine
     let isSavedRoutine: Bool
     let autoStart: Bool
+    /// Set when the routine is a session of the active 4-week plan, so the finished workout is
+    /// credited to it.
+    var planSession: PlanSessionRef? = nil
 }
 
 /// Root of the app: a tab per session kind (Exercises, Timers), plus Routines and Settings.
@@ -86,6 +90,11 @@ struct RootTabView: View {
             Tab(SessionKind.timer.tabTitle, systemImage: SessionKind.timer.tabIcon, value: .timers) {
                 NavigationStack {
                     SessionBuilderView(kind: .timer, savedRoutines: $savedRoutines, loadRequest: $timerLoadRequest)
+                }
+            }
+            Tab("Plan", systemImage: "calendar", value: .plan) {
+                NavigationStack {
+                    TrainingPlanView(savedRoutines: savedRoutines, onStart: loadRoutine)
                 }
             }
             Tab("Routines", systemImage: "folder", value: .routines) {

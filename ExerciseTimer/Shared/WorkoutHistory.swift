@@ -14,6 +14,8 @@ struct CompletedWorkout: Codable, Equatable, Identifiable {
     var duration: TimeInterval
     var completedNaturally: Bool
     var records: [SetRecord]
+    /// Set when this workout was a session of a 4-week plan (see `TrainingPlan`).
+    var planSession: PlanSessionRef? = nil
 }
 
 /// What we know about an exercise from the most recent session that included it.

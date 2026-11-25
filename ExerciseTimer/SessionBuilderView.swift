@@ -24,6 +24,8 @@ struct SessionBuilderView: View {
     /// import, or loading a preloaded (non-editable) routine, so those never get treated as edits
     /// to a saved routine that merely happens to share exercise ids.
     @State private var loadedRoutineID: Routine.ID?
+    /// The plan session the loaded routine came from, if any — credited when the workout finishes.
+    @State private var activePlanSession: PlanSessionRef?
     @State private var showSaveRoutineAlert = false
     @State private var newRoutineName = ""
     @State private var newRoutineCategory = ""
@@ -94,7 +96,8 @@ struct SessionBuilderView: View {
             enableBackgroundAudio: $enableBackgroundAudio,
             healthKitEnabled: healthKitEnabled,
             activityType: activityType,
-            routineName: loadedRoutineName
+            routineName: loadedRoutineName ?? activePlanSessionName,
+            planSession: activePlanSession
         )
         view.onExerciseAdjusted = applyLiveAdjustment
         return view
@@ -107,7 +110,8 @@ struct SessionBuilderView: View {
             isActive: $isWorkoutActive,
             healthKitEnabled: false,
             activityType: .functionalStrengthTraining,
-            routineName: loadedRoutineName
+            routineName: loadedRoutineName ?? activePlanSessionName,
+            planSession: activePlanSession
         )
         view.onExerciseAdjusted = applyLiveAdjustment
         return view
@@ -142,7 +146,7 @@ struct SessionBuilderView: View {
             }
         }
         .alert("Reset \(kind.itemNamePlural)?", isPresented: $showingResetConfirm) {
-            Button("Reset", role: .destructive) { exercises = [Exercise()]; loadedRoutineID = nil; persistExercises() }
+            Button("Reset", role: .destructive) { exercises = [Exercise()]; loadedRoutineID = nil; activePlanSession = nil; persistExercises() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will remove all \(kind.itemNamePlural.lowercased()) in the builder.")
@@ -159,6 +163,7 @@ struct SessionBuilderView: View {
             guard let request = newValue else { return }
             exercises = request.routine.exercises
             loadedRoutineID = request.isSavedRoutine ? request.routine.id : nil
+            activePlanSession = request.planSession
             exercises.normalizeSupersets()
             persistExercises()
             if request.autoStart {
@@ -227,6 +232,13 @@ struct SessionBuilderView: View {
         }
     }
 #endif
+
+    /// "Full Body A · Week 2" style name when running a plan session.
+    private var activePlanSessionName: String? {
+        guard let ref = activePlanSession, let plan = TrainingPlanStore.shared.plan, plan.id == ref.planID,
+              let session = plan.sessions().first(where: { $0.index == ref.index }) else { return nil }
+        return "\(plan.workouts[session.workoutIndex].name) · Week \(session.week)"
+    }
 
     /// Name of the saved routine currently loaded, for the recap and workout history.
     private var loadedRoutineName: String? {

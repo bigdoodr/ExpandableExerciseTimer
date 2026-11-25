@@ -12,6 +12,7 @@ Features
 - Completion Notifications - Receive a notification when your routine finishes
 - Supersets & Timed Supersets - Link exercises into circuits with per-round or whole-chain time budgets
 - Set Logging & Progression - Log actual reps and weight; see last time and get "go heavier" suggestions
+- 4-Week Plans - Progressive plans built from your goal, days and equipment, or from built-in programs; each session adapts to what you logged
 - Workout Preview - See the whole session block by block, with an estimated time, before you start
 - Swap / Skip / Add Mid-Workout - Change plans on the fly when equipment is taken
 
