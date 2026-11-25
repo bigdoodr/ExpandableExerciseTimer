@@ -115,6 +115,15 @@ extension Array where Element == Exercise {
         }
     }
 
+    /// True when the exercise at `index` is in a Timed Superset (a linked chain whose head has a
+    /// time budget). Its reps are fixed by the prescription; you progress by finishing more rounds
+    /// in the time, so per-exercise rep/weight hints don't apply.
+    func isInTimedChain(_ index: Int) -> Bool {
+        guard indices.contains(index) else { return false }
+        let range = supersetGroupRange(containing: index)
+        return range.count > 1 && (self[range.lowerBound].groupTimeBudget ?? 0) > 0
+    }
+
     /// Enforces the superset invariants after any edit to an exercise list:
     /// - A superset marker on the first exercise means "linked to nothing" — not valid.
     /// Rest durations on chain members are intentionally left alone — each member's own
