@@ -35,11 +35,11 @@ struct SessionBuilderView: View {
 #endif
 #if canImport(UIKit)
     // Persisted so a preference set in Settings sticks across app launches.
-    @AppStorage("keepScreenAwake") private var keepScreenAwake = false
-    @AppStorage("enableBackgroundAudio") private var enableBackgroundAudio = false
+    @AppStorage("keepScreenAwake", store: AppDefaults.store) private var keepScreenAwake = false
+    @AppStorage("enableBackgroundAudio", store: AppDefaults.store) private var enableBackgroundAudio = false
 #endif
 #if os(iOS)
-    @AppStorage("workoutActivityType") private var workoutActivityTypeRaw = WorkoutActivityOption.functionalStrengthTraining.rawValue
+    @AppStorage("workoutActivityType", store: AppDefaults.store) private var workoutActivityTypeRaw = WorkoutActivityOption.functionalStrengthTraining.rawValue
     private var activityType: WorkoutActivityOption {
         WorkoutActivityOption(rawValue: workoutActivityTypeRaw) ?? .functionalStrengthTraining
     }
@@ -54,6 +54,16 @@ struct SessionBuilderView: View {
 #endif
 
     private var exercisesDefaultsKey: String { kind == .workout ? "savedExercises" : "savedTimers" }
+
+#if DEBUG
+    /// Screenshot mode: open straight into the scene's frozen session when it belongs to this tab.
+    init(kind: SessionKind, savedRoutines: Binding<[Routine]>, loadRequest: Binding<RoutineLoadRequest?>) {
+        self.kind = kind
+        self._savedRoutines = savedRoutines
+        self._loadRequest = loadRequest
+        self._isWorkoutActive = State(initialValue: ScreenshotMode.controller(for: kind) != nil)
+    }
+#endif
 
     var body: some View {
 #if canImport(WatchConnectivity)
@@ -88,6 +98,12 @@ struct SessionBuilderView: View {
 
     #if os(iOS)
     private func makeSessionView() -> SessionView {
+        #if DEBUG
+        if let frozen = ScreenshotMode.controller(for: kind) {
+            return SessionView(frozen: frozen, isActive: $isWorkoutActive, keepScreenAwake: $keepScreenAwake,
+                               enableBackgroundAudio: $enableBackgroundAudio, showsPlan: ScreenshotMode.opensPlanSheet)
+        }
+        #endif
         var view = SessionView(
             kind: kind,
             exercises: exercises,
@@ -104,6 +120,11 @@ struct SessionBuilderView: View {
     }
     #else
     private func makeSessionView() -> SessionView {
+        #if DEBUG
+        if let frozen = ScreenshotMode.controller(for: kind) {
+            return SessionView(frozen: frozen, isActive: $isWorkoutActive, showsPlan: ScreenshotMode.opensPlanSheet)
+        }
+        #endif
         var view = SessionView(
             kind: kind,
             exercises: exercises,
@@ -349,7 +370,7 @@ struct SessionBuilderView: View {
     }
 
     private func loadSavedExercises() {
-        if let data = UserDefaults.standard.data(forKey: exercisesDefaultsKey) {
+        if let data = AppDefaults.store.data(forKey: exercisesDefaultsKey) {
             if let decoded = try? JSONDecoder().decode([Exercise].self, from: data) {
                 exercises = decoded
                 exercises.normalizeSupersets()
@@ -359,7 +380,7 @@ struct SessionBuilderView: View {
 
     private func persistExercises() {
         if let data = try? JSONEncoder().encode(exercises) {
-            UserDefaults.standard.set(data, forKey: exercisesDefaultsKey)
+            AppDefaults.store.set(data, forKey: exercisesDefaultsKey)
         }
         // Only the Exercises tab keeps the watch's mirrored context live on every edit — the
         // Timers tab pushes it once, right before a session actually starts (see

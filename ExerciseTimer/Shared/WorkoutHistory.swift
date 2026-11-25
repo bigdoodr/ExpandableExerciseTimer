@@ -133,7 +133,12 @@ enum Milestones {
 
 /// On-device JSON store. Kept deliberately simple; capped so it never grows unbounded.
 final class WorkoutHistoryStore {
+    #if DEBUG
+    /// Screenshot mode reads and writes a temporary directory instead of Application Support.
+    static let shared = WorkoutHistoryStore(directory: ScreenshotMode.storeDirectory)
+    #else
     static let shared = WorkoutHistoryStore()
+    #endif
     private static let maxWorkouts = 500
 
     private let url: URL

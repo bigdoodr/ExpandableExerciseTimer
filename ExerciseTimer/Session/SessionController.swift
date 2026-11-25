@@ -65,6 +65,37 @@ final class SessionController: ObservableObject {
         #endif
     }
 
+    #if DEBUG
+    /// Screenshot mode: wraps a prebuilt engine and never starts the ticker, so countdowns hold
+    /// still at `now`. A finished engine shows its recap straight away (without touching history).
+    private(set) var isFrozen = false
+
+    init(frozenEngine engine: SessionEngine, now: Date, kind: SessionKind, routineName: String?,
+         history: WorkoutHistoryStore) {
+        self.kind = kind
+        self.routineName = routineName
+        self.planSession = nil
+        self.history = history
+        self.engine = engine
+        self.now = now
+        self.workoutID = UUID()
+        #if canImport(HealthKit) && !os(macOS)
+        self.healthKitEnabled = kind == .workout
+        self.activityType = .functionalStrengthTraining
+        #endif
+        self.isFrozen = true
+        self.hasStarted = true
+        if engine.state.isFinished {
+            let summary = engine.recap(now: now)
+            recap = summary
+            let workout = CompletedWorkout(date: engine.state.startedAt, kind: kind, routineName: routineName,
+                                           duration: summary.duration, completedNaturally: summary.completedNaturally,
+                                           records: summary.records)
+            milestones = Milestones.find(in: workout, history: history.workouts)
+        }
+    }
+    #endif
+
     // MARK: Lifecycle
 
     private var hasStarted = false
@@ -86,7 +117,12 @@ final class SessionController: ObservableObject {
     }
 
     /// Called when the app returns to the foreground: catches up on everything that happened.
-    func catchUp() { tick(Date()) }
+    func catchUp() {
+        #if DEBUG
+        if isFrozen { return }
+        #endif
+        tick(Date())
+    }
 
     func setBackgroundAudio(_ enabled: Bool) {
         #if canImport(UIKit)

@@ -53,6 +53,15 @@ struct TrainingPlanView: View {
     @State private var showCreate = false
     @State private var showEndConfirm = false
 
+#if DEBUG
+    /// Screenshot mode: the `createPlan` scene opens the New Plan sheet immediately.
+    init(savedRoutines: [Routine], onStart: @escaping (RoutineLoadRequest) -> Void) {
+        self.savedRoutines = savedRoutines
+        self.onStart = onStart
+        self._showCreate = State(initialValue: ScreenshotMode.opensCreatePlan)
+    }
+#endif
+
     var body: some View {
         Group {
             if let plan {

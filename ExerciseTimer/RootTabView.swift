@@ -48,6 +48,13 @@ struct RootTabView: View {
 #endif
     @Environment(\.scenePhase) private var scenePhase
 
+#if DEBUG
+    /// Screenshot mode: start on the tab the requested scene lives on.
+    init() {
+        self._selectedTab = State(initialValue: ScreenshotMode.initialTab)
+    }
+#endif
+
     private let savedRoutinesKey = "savedRoutines"
     private let pendingRoutineKey = "pendingRoutineStart"
     private let hasSeenOnboardingKey = "hasSeenOnboarding"
@@ -74,7 +81,7 @@ struct RootTabView: View {
     /// The last release whose guide was dismissed. Installs from before build tracking only stored
     /// a version string, so those are treated as build 1 of that version.
     private var lastSeenRelease: AppRelease {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults.store
         guard let version = defaults.string(forKey: lastSeenAppVersionKey) else { return .baseline }
         let build = defaults.object(forKey: lastSeenAppBuildKey) as? Int ?? 1
         return AppRelease(versionString: version, build: build)
@@ -115,7 +122,12 @@ struct RootTabView: View {
             checkPendingRoutine()
             presentOnboardingIfNeeded()
 #if os(iOS) && canImport(HealthKit)
+#if DEBUG
+            // Screenshot mode uses faked Health values; don't let a real read replace them.
+            if !ScreenshotMode.isActive { HealthKitWorkoutManager.shared.fetchMaxHeartRate() }
+#else
             HealthKitWorkoutManager.shared.fetchMaxHeartRate()
+#endif
 #endif
         }
         .onChange(of: savedRoutines) { _, _ in
@@ -125,7 +137,12 @@ struct RootTabView: View {
             if phase == .active {
                 checkPendingRoutine()
 #if os(iOS) && canImport(HealthKit)
+#if DEBUG
+                // No Health permission prompt over a screenshot.
+                if !ScreenshotMode.isActive { Task { await HealthKitWorkoutManager.shared.requestAuthorization() } }
+#else
                 Task { await HealthKitWorkoutManager.shared.requestAuthorization() }
+#endif
 #endif
             }
         }
@@ -155,7 +172,11 @@ struct RootTabView: View {
 
     /// Shows the full guide on first launch, or a condensed "What's New" pass after an app update.
     private func presentOnboardingIfNeeded() {
-        let defaults = UserDefaults.standard
+#if DEBUG
+        // Screenshot mode skips onboarding and What's New.
+        if ScreenshotMode.isActive { return }
+#endif
+        let defaults = AppDefaults.store
         guard defaults.bool(forKey: hasSeenOnboardingKey) else {
             onboardingMode = .full
             showOnboarding = true
@@ -175,7 +196,7 @@ struct RootTabView: View {
     }
 
     private func markOnboardingSeen() {
-        let defaults = UserDefaults.standard
+        let defaults = AppDefaults.store
         defaults.set(true, forKey: hasSeenOnboardingKey)
         let release = currentRelease
         defaults.set(release.version.map(String.init).joined(separator: "."), forKey: lastSeenAppVersionKey)
@@ -183,7 +204,7 @@ struct RootTabView: View {
     }
 
     private func loadSavedRoutines() {
-        if let data = UserDefaults.standard.data(forKey: savedRoutinesKey),
+        if let data = AppDefaults.store.data(forKey: savedRoutinesKey),
            let decoded = try? JSONDecoder().decode([Routine].self, from: data) {
             savedRoutines = decoded
         }
@@ -191,7 +212,7 @@ struct RootTabView: View {
 
     private func persistRoutines() {
         if let data = try? JSONEncoder().encode(savedRoutines) {
-            UserDefaults.standard.set(data, forKey: savedRoutinesKey)
+            AppDefaults.store.set(data, forKey: savedRoutinesKey)
         }
     }
 
@@ -215,9 +236,9 @@ struct RootTabView: View {
     }
 
     private func checkPendingRoutine() {
-        guard let idStr = UserDefaults.standard.string(forKey: pendingRoutineKey),
+        guard let idStr = AppDefaults.store.string(forKey: pendingRoutineKey),
               let request = pendingRoutineRequest(for: idStr) else { return }
-        UserDefaults.standard.removeObject(forKey: pendingRoutineKey)
+        AppDefaults.store.removeObject(forKey: pendingRoutineKey)
         loadRoutine(request)
     }
 }

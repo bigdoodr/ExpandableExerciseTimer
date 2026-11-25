@@ -58,6 +58,27 @@ struct SessionView: View {
     }
 #endif
 
+#if DEBUG
+    /// Screenshot mode: shows a prebuilt, frozen controller (see `ScreenshotMode`).
+#if canImport(UIKit)
+    init(frozen controller: SessionController, isActive: Binding<Bool>, keepScreenAwake: Binding<Bool>, enableBackgroundAudio: Binding<Bool>, showsPlan: Bool) {
+        self.kind = controller.kind
+        self._isActive = isActive
+        self._keepScreenAwake = keepScreenAwake
+        self._enableBackgroundAudio = enableBackgroundAudio
+        self._controller = StateObject(wrappedValue: controller)
+        self._showPlan = State(initialValue: showsPlan)
+    }
+#else
+    init(frozen controller: SessionController, isActive: Binding<Bool>, showsPlan: Bool) {
+        self.kind = controller.kind
+        self._isActive = isActive
+        self._controller = StateObject(wrappedValue: controller)
+        self._showPlan = State(initialValue: showsPlan)
+    }
+#endif
+#endif
+
     private var engine: SessionEngine { controller.engine }
 
     var body: some View {

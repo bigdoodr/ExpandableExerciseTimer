@@ -338,7 +338,12 @@ enum PlanGenerator {
 // MARK: - Store
 
 final class TrainingPlanStore {
+    #if DEBUG
+    /// Screenshot mode reads and writes a temporary directory instead of Application Support.
+    static let shared = TrainingPlanStore(directory: ScreenshotMode.storeDirectory)
+    #else
     static let shared = TrainingPlanStore()
+    #endif
     private let url: URL
     private(set) var plan: TrainingPlan?
 

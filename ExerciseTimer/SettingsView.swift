@@ -4,8 +4,8 @@ import SwiftUI
 /// as the person switches between the Exercises and Timers tabs.
 struct SettingsView: View {
 #if canImport(UIKit)
-    @AppStorage("keepScreenAwake") private var keepScreenAwake = false
-    @AppStorage("enableBackgroundAudio") private var enableBackgroundAudio = false
+    @AppStorage("keepScreenAwake", store: AppDefaults.store) private var keepScreenAwake = false
+    @AppStorage("enableBackgroundAudio", store: AppDefaults.store) private var enableBackgroundAudio = false
 #endif
     /// Called when the person taps "View Onboarding Guide" — presented directly over whichever
     /// tab is currently selected, since Settings is a tab rather than a sheet now.
