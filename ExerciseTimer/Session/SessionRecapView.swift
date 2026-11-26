@@ -15,59 +15,19 @@ struct SessionRecapView: View {
 
     private var kind: SessionKind { controller.kind }
 
+    /// Width at which the summary switches to two columns (same threshold as the session screen).
+    private static let wideLayoutMinWidth: CGFloat = 700
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    VStack(spacing: 8) {
-                        Image(systemName: recap.completedNaturally ? "checkmark.circle.fill" : "stop.circle.fill")
-                            .font(.system(size: 48))
-                            .foregroundStyle(recap.completedNaturally ? .green : .orange)
-                        Text(recap.completedNaturally ? kind.recapCompletedTitle : kind.recapEndedTitle)
-                            .font(.title.bold())
-                        if let name = controller.routineName {
-                            Text(name).foregroundStyle(.secondary)
-                        }
+            GeometryReader { geo in
+                ScrollView {
+                    if geo.size.width >= Self.wideLayoutMinWidth {
+                        wideContent
+                    } else {
+                        narrowContent
                     }
-                    .padding(.top)
-
-                    if !controller.milestones.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Label("Milestones", systemImage: "trophy.fill")
-                                .font(.headline)
-                                .foregroundStyle(.yellow)
-                            ForEach(controller.milestones) { m in
-                                HStack {
-                                    Text(m.exerciseName).bold()
-                                    Spacer()
-                                    Text(m.detail).foregroundStyle(.secondary)
-                                }
-                                .font(.subheadline)
-                            }
-                        }
-                        .padding()
-                        .background(Color.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .padding(.horizontal)
-                    }
-
-                    stats
-                        .padding()
-                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .padding(.horizontal)
-
-                    if kind == .workout, recap.records.contains(where: { !$0.skipped }) {
-                        setLog
-                            .padding()
-                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .padding(.horizontal)
-                    }
-
-                    GlassActionButton(tint: .green, action: onDone) {
-                        Text("Done").font(.headline)
-                    }
-                    .padding(.horizontal)
                 }
-                .padding(.bottom)
             }
             .captureID("recap.screen")
             .navigationTitle("Summary")
@@ -77,7 +37,106 @@ struct SessionRecapView: View {
         }
     }
 
-    private var stats: some View {
+    private var header: some View {
+        VStack(spacing: 8) {
+            Image(systemName: recap.completedNaturally ? "checkmark.circle.fill" : "stop.circle.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(recap.completedNaturally ? .green : .orange)
+            Text(recap.completedNaturally ? kind.recapCompletedTitle : kind.recapEndedTitle)
+                .font(.title.bold())
+            if let name = controller.routineName {
+                Text(name).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.top)
+    }
+
+    @ViewBuilder
+    private var milestonesCard: some View {
+        if !controller.milestones.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Milestones", systemImage: "trophy.fill")
+                    .font(.headline)
+                    .foregroundStyle(.yellow)
+                ForEach(controller.milestones) { m in
+                    HStack {
+                        Text(m.exerciseName).bold()
+                        Spacer()
+                        Text(m.detail).foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private var setLogCard: some View {
+        if kind == .workout, recap.records.contains(where: { !$0.skipped }) {
+            setLog
+                .padding()
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+    }
+
+    private var doneButton: some View {
+        GlassActionButton(tint: .green, action: onDone) {
+            Text("Done").font(.headline)
+        }
+    }
+
+    /// The single-column summary used below `wideLayoutMinWidth`.
+    private var narrowContent: some View {
+        VStack(spacing: 24) {
+            header
+            milestonesCard.padding(.horizontal)
+            stats(includeZones: true)
+                .padding()
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.horizontal)
+            setLogCard.padding(.horizontal)
+            doneButton.padding(.horizontal)
+        }
+        .padding(.bottom)
+    }
+
+    /// Two columns for wide windows: Milestones and stats on the left, Heart Rate Zones and Sets
+    /// Logged on the right, Done centred below.
+    private var wideContent: some View {
+        VStack(spacing: 24) {
+            header
+            HStack(alignment: .top, spacing: 20) {
+                VStack(spacing: 24) {
+                    milestonesCard
+                    stats(includeZones: false)
+                        .padding()
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .frame(maxWidth: .infinity)
+                VStack(spacing: 24) {
+#if canImport(HealthKit) && !os(macOS)
+                    if kind == .workout {
+                        zonesRows(leadingDivider: false)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+#endif
+                    setLogCard
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal)
+            doneButton
+                .frame(maxWidth: 360)
+        }
+        .padding(.bottom)
+    }
+
+    private func stats(includeZones: Bool) -> some View {
         VStack(spacing: 16) {
             row("clock", .blue, "Duration", SessionFormat.time(recap.duration))
             Divider()
@@ -98,7 +157,7 @@ struct SessionRecapView: View {
             }
 #if canImport(HealthKit) && !os(macOS)
             if kind == .workout {
-                healthRows
+                healthRows(includeZones: includeZones)
             }
 #endif
         }
@@ -140,7 +199,7 @@ struct SessionRecapView: View {
 
 #if canImport(HealthKit) && !os(macOS)
     @ViewBuilder
-    private var healthRows: some View {
+    private func healthRows(includeZones: Bool) -> some View {
         let hr = controller.averageHeartRate
         let calories = HealthKitWorkoutManager.shared.activeCalories
         if hr > 0 {
@@ -151,14 +210,24 @@ struct SessionRecapView: View {
             Divider()
             row("flame.fill", .orange, "Calories", "\(Int(calories)) CAL")
         }
+        if includeZones {
+            zonesRows(leadingDivider: true)
+        }
+    }
+
+    /// The time-in-zone breakdown, or a note while it is still being calculated. Inside the stats
+    /// card it follows a divider; in the two-column layout it sits in a card of its own.
+    @ViewBuilder
+    private func zonesRows(leadingDivider: Bool) -> some View {
+        let hr = controller.averageHeartRate
         let zones = zoneEntries
         if !zones.isEmpty {
-            Divider()
+            if leadingDivider { Divider() }
             HeartRateZoneBreakdown(entries: zones)
                 .captureID("recap.zones")
         } else if hr > 0 {
 #if os(iOS)
-            Divider()
+            if leadingDivider { Divider() }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Heart Rate Zones").font(.subheadline).foregroundStyle(.secondary)
                 Text("Calculating your zone breakdown — this can take a few seconds to appear.")

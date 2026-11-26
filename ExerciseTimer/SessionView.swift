@@ -149,41 +149,120 @@ struct SessionView: View {
 
     // MARK: - Session layout
 
+    /// Width at which the session switches to two columns. Read from a GeometryReader rather than
+    /// the size class: the Duo's inner display can report a compact width.
+    private static let wideLayoutMinWidth: CGFloat = 700
+
     private var sessionContent: some View {
+        GeometryReader { geo in
+            if geo.size.width >= Self.wideLayoutMinWidth {
+                wideSessionContent(in: geo.size)
+            } else {
+                narrowSessionContent
+            }
+        }
+        .overlay(alignment: .bottom) { undoToast }
+        .onChange(of: engine.state.stepIndex, initial: true) { _, _ in resetPendingReps() }
+    }
+
+    /// The single-column layout used below `wideLayoutMinWidth`.
+    private var narrowSessionContent: some View {
         ScrollView {
             VStack(spacing: 20) {
                 topBar
                 BlockProgressStrip(engine: engine)
                 exerciseCard
-                phaseCard
-                if kind == .workout, let index = engine.headlineExerciseIndex() {
-                    SetTracker(engine: engine, exerciseIndex: index)
-                }
-                if engine.currentStep?.isRest == true, kind == .workout, let last = engine.lastRecord,
-                   !last.skipped, last.reps != nil || last.weight != nil {
-                    LastSetLogCard(record: last) { reps, weight in
-                        controller.amendLastRecord(reps: reps, weight: weight)
-                    }
-                    .captureID("session.logCard")
-                }
-                let upNext = engine.upNextText(kind: kind, now: controller.now)
-                if !upNext.isEmpty {
-                    Text(upNext)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-#if canImport(HealthKit) && canImport(UIKit)
-                if controller.healthKitEnabled && HealthKitWorkoutManager.shared.isWorkoutActive {
-                    HealthMetricsStrip(manager: HealthKitWorkoutManager.shared)
-                }
-#endif
+                phaseCard()
+                setTrackerSection
+                lastSetLogSection
+                upNextSection
+                healthSection
                 controls
             }
             .padding()
         }
-        .overlay(alignment: .bottom) { undoToast }
-        .onChange(of: engine.state.stepIndex, initial: true) { _, _ in resetPendingReps() }
+    }
+
+    /// Two columns for wide windows (iPad, iPhone landscape, the Duo's inner display): the top bar
+    /// and progress strip across the top, the exercise and phase cards on the left (about 55%), and
+    /// the set log, Up Next and Health on the right with the controls pinned underneath. Each
+    /// column scrolls on its own if it is taller than the screen.
+    private func wideSessionContent(in size: CGSize) -> some View {
+        let padding: CGFloat = 16
+        let gap: CGFloat = 20
+        let leftWidth = (size.width - padding * 2 - gap) * 0.55
+        // Grow the ring to fill the left column, within what the height leaves after the exercise card.
+        let ringDiameter = min(300, max(160, min(leftWidth - 96, size.height - 400)))
+        return VStack(spacing: 12) {
+            VStack(spacing: 12) {
+                topBar
+                BlockProgressStrip(engine: engine)
+            }
+            HStack(alignment: .top, spacing: gap) {
+                ScrollView {
+                    VStack(spacing: 20) {
+                        exerciseCard
+                        phaseCard(ringDiameter: ringDiameter)
+                    }
+                    .padding(.bottom)
+                }
+                .frame(width: leftWidth)
+                VStack(spacing: 12) {
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            setTrackerSection
+                            lastSetLogSection
+                            upNextSection
+                            healthSection
+                        }
+                    }
+                    controls
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(.horizontal, padding)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var setTrackerSection: some View {
+        if kind == .workout, let index = engine.headlineExerciseIndex() {
+            SetTracker(engine: engine, exerciseIndex: index)
+        }
+    }
+
+    @ViewBuilder
+    private var lastSetLogSection: some View {
+        if engine.currentStep?.isRest == true, kind == .workout, let last = engine.lastRecord,
+           !last.skipped, last.reps != nil || last.weight != nil {
+            LastSetLogCard(record: last) { reps, weight in
+                controller.amendLastRecord(reps: reps, weight: weight)
+            }
+            .captureID("session.logCard")
+        }
+    }
+
+    @ViewBuilder
+    private var upNextSection: some View {
+        let upNext = engine.upNextText(kind: kind, now: controller.now)
+        if !upNext.isEmpty {
+            Text(upNext)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    @ViewBuilder
+    private var healthSection: some View {
+#if canImport(HealthKit) && canImport(UIKit)
+        if controller.healthKitEnabled && HealthKitWorkoutManager.shared.isWorkoutActive {
+            HealthMetricsStrip(manager: HealthKitWorkoutManager.shared)
+        }
+#endif
     }
 
     private var topBar: some View {
@@ -270,7 +349,7 @@ struct SessionView: View {
     }
 
     @ViewBuilder
-    private var phaseCard: some View {
+    private func phaseCard(ringDiameter: CGFloat = 220) -> some View {
         let style = engine.phaseStyle()
         let tint: Color = style == .rest ? .orange : (style == .manualWork ? .blue : .green)
         VStack(spacing: 16) {
@@ -282,7 +361,7 @@ struct SessionView: View {
             switch style {
             case .timedWork, .rest:
                 CountdownRing(remaining: engine.timeRemaining(at: controller.now) ?? 0,
-                              total: phaseLength, tint: tint)
+                              total: phaseLength, tint: tint, diameter: ringDiameter)
                     .captureID("session.countdown")
             case .manualWork:
                 if kind == .workout, let exercise = engine.currentExercise, !exercise.isTimeBased {
@@ -444,6 +523,8 @@ struct CountdownRing: View {
     let remaining: TimeInterval
     let total: TimeInterval
     let tint: Color
+    /// 220 pt in the single-column layout; the two-column layout grows it (up to 300 pt).
+    var diameter: CGFloat = 220
 
     var body: some View {
         ZStack {
@@ -454,12 +535,12 @@ struct CountdownRing: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.2), value: remaining)
             Text(SessionFormat.time(remaining))
-                .font(.system(size: 64, weight: .bold, design: .rounded))
+                .font(.system(size: 64 * diameter / 220, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .minimumScaleFactor(0.5)
                 .padding(24)
         }
-        .frame(width: 220, height: 220)
+        .frame(width: diameter, height: diameter)
     }
 }
 
