@@ -164,6 +164,7 @@ struct SessionView: View {
                     LastSetLogCard(record: last) { reps, weight in
                         controller.amendLastRecord(reps: reps, weight: weight)
                     }
+                    .captureID("session.logCard")
                 }
                 let upNext = engine.upNextText(kind: kind, now: controller.now)
                 if !upNext.isEmpty {
@@ -213,6 +214,7 @@ struct SessionView: View {
                         .foregroundStyle(.purple)
                 }
                 Text(engine.displayName(ofExercise: index, kind: kind))
+                    .captureID("session.exerciseName")
                     .font(.largeTitle.bold())
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.6)
@@ -275,11 +277,13 @@ struct SessionView: View {
             Text(engine.phaseLabel(kind: kind))
                 .font(.headline)
                 .foregroundStyle(tint)
+                .captureID("session.phaseLabel")
 
             switch style {
             case .timedWork, .rest:
                 CountdownRing(remaining: engine.timeRemaining(at: controller.now) ?? 0,
                               total: phaseLength, tint: tint)
+                    .captureID("session.countdown")
             case .manualWork:
                 if kind == .workout, let exercise = engine.currentExercise, !exercise.isTimeBased {
                     // Starts at the target; AMRAP starts blank and only logs a count if you set one.
@@ -298,6 +302,7 @@ struct SessionView: View {
                 }) {
                     Text(kind.manualAdvanceButtonLabel).font(.headline)
                 }
+                .captureID("session.repsComplete")
             case .finished:
                 EmptyView()
             }
@@ -307,6 +312,7 @@ struct SessionView: View {
                       systemImage: "timer")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .captureID("session.windowLeft")
             }
         }
         .padding()

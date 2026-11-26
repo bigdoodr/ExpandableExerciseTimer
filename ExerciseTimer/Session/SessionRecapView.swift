@@ -69,6 +69,7 @@ struct SessionRecapView: View {
                 }
                 .padding(.bottom)
             }
+            .captureID("recap.screen")
             .navigationTitle("Summary")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -154,6 +155,7 @@ struct SessionRecapView: View {
         if !zones.isEmpty {
             Divider()
             HeartRateZoneBreakdown(entries: zones)
+                .captureID("recap.zones")
         } else if hr > 0 {
 #if os(iOS)
             Divider()

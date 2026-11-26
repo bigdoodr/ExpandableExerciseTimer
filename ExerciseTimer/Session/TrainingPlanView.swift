@@ -237,6 +237,7 @@ struct TrainingPlanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
+                .captureID("plan.start")
             }
         }
         .padding(.vertical, 4)
@@ -327,6 +328,7 @@ struct CreatePlanView: View {
                     DatePicker("Start", selection: $options.startDate, displayedComponents: .date)
                 }
             }
+            .captureID("createPlan.form")
             .navigationTitle("New 4-Week Plan")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

@@ -67,6 +67,7 @@ struct RoutinesView: View {
             savedRoutinesSection(title: "My Workouts", routines: myWorkouts)
             savedRoutinesSection(title: "My Timers", routines: myTimers)
         }
+        .captureID("routines.list")
         .navigationTitle("Routines")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)

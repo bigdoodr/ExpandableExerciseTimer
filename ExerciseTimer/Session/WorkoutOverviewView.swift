@@ -40,6 +40,7 @@ struct WorkoutOverviewView: View {
                 }
             }
         }
+        .captureID("overview.list")
         .navigationTitle(kind == .workout ? "Workout Plan" : "Timer Plan")
 #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
