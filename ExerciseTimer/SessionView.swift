@@ -160,6 +160,9 @@ struct SessionView: View {
             }
             .padding()
         }
+        // Inside the GeometryReader the scroll view would stop at the safe area; let it run under
+        // the home indicator as it always has.
+        .ignoresSafeArea(.container, edges: .bottom)
     }
 
     /// Two columns for wide windows (iPad, iPhone landscape, the Duo's inner display): the top bar
