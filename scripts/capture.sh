@@ -101,7 +101,37 @@ run_simulator() {
 
     # Attachments are named NN_scene; export them as <device>_<lang>_<NN>_<scene>.png.
     python3 -I - "$EXPORT" "$OUT_DIR" "$TAG" "$LANG_CODE" <<'PY'
-import json, pathlib, re, shutil, sys
+import json, pathlib, re, shutil, struct, subprocess, sys
+
+def strip_exif(path):
+    """Rewrites the PNG without its eXIf chunk; returns the orientation tag it carried (1 = none)."""
+    data = path.read_bytes()
+    chunks, pos, orientation = [], 8, 1
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        if kind == b"eXIf":
+            t = data[pos + 8:pos + 8 + length]
+            e = "<" if t[:2] == b"II" else ">"
+            off = struct.unpack(e + "I", t[4:8])[0]
+            for k in range(struct.unpack(e + "H", t[off:off + 2])[0]):
+                entry = t[off + 2 + 12 * k:off + 14 + 12 * k]
+                if struct.unpack(e + "H", entry[:2])[0] == 0x112:
+                    orientation = struct.unpack(e + "H", entry[8:10])[0]
+        else:
+            chunks.append(data[pos:pos + 12 + length])
+        pos += 12 + length
+    path.write_bytes(data[:8] + b"".join(chunks))
+    return orientation
+
+def normalize(path):
+    """XCUITest saves landscape screenshots as unrotated portrait pixels plus an EXIF orientation
+    tag. App Store Connect reads the pixels, so rotate them for real and drop the tag (sips keeps
+    the tag when it rotates, so it is stripped again afterwards)."""
+    degrees = {3: 180, 6: 90, 8: 270}.get(strip_exif(path))
+    if degrees:
+        subprocess.run(["sips", "-r", str(degrees), str(path)], check=True, capture_output=True)
+        strip_exif(path)
+
 src, dst, tag, lang = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3], sys.argv[4]
 for test in json.loads((src / "manifest.json").read_text()):
     for a in test.get("attachments", []):
@@ -112,6 +142,7 @@ for test in json.loads((src / "manifest.json").read_text()):
             continue                                                  # ignore anything that isn't a capture
         out = dst / f"{tag}_{lang}_{stem}.png"
         shutil.copy(src / a["exportedFileName"], out)
+        normalize(out)
         print(out)
 PY
   done
