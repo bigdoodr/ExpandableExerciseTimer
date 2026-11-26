@@ -3,6 +3,7 @@
 # window captures, and writes PNGs named <device>_<lang>_<NN>_<scene>.png into OUT_DIR.
 #
 # Usage:  scripts/capture.sh                 all devices
+#         SCENES_ONLY="01 07" scripts/capture.sh ipad13   only those scenes
 #         scripts/capture.sh iphone69 ipad13 only these tags (iphone69 duo_outer duo_inner ipad13 mac)
 #
 # The app must be a DEBUG build: screenshot mode is compiled out of Release.
@@ -69,6 +70,7 @@ check_size() {  # file tag
 
 run_simulator() {
   local TAG="$1" NAME="$2" ORIENT="$3" FOLD="$4" SCENES="$5"
+  SCENES="${SCENES_ONLY:-$SCENES}"   # SCENES_ONLY="01 02" re-captures just those scenes
   local UDID
   UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; print([d['udid'] for r in json.load(sys.stdin)['devices'].values() for d in r if d['name']=='$NAME'][-1])")
   xcrun simctl boot "$UDID" 2>/dev/null || true
