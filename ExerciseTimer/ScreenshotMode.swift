@@ -223,13 +223,17 @@ enum ScreenshotMode {
         workouts.append(completedWorkout(daysAgo: 5, name: "Friday MetCon", duration: 720, exercises: metCon,
                                          sets: [rounds, Array(repeating: (15, nil), count: 8), Array(repeating: (15, 53), count: 8)]))
 
-        // The active plan: Build Muscle, dumbbells, Mon/Wed/Fri, started 8 days ago. Sessions 0–2
-        // are done and tagged, which puts the Plan tab in Week 2 · Build.
+        // The active plan: Build Muscle, dumbbells, three days a week anchored on the launch day
+        // (today, today + 2, today + 4, wrapping round the week), started 7 days ago. Sessions 0–2
+        // fall 7, 5 and 3 days ago and are done and tagged; session 3 (Week 2 · Build, Full Body B)
+        // falls today, so Up Next always says "Today".
         var options = PlanGenerator.Options()
         options.goal = .muscle
         options.equipment = .dumbbells
-        options.weekdays = [2, 4, 6]
-        options.startDate = base.addingTimeInterval(-8 * 86_400)
+        let calendar = Calendar.current
+        let today = calendar.component(.weekday, from: base)   // 1 = Sunday … 7 = Saturday
+        options.weekdays = [0, 2, 4].map { (today - 1 + $0) % 7 + 1 }.sorted()
+        options.startDate = calendar.date(byAdding: .day, value: -7, to: base) ?? base.addingTimeInterval(-7 * 86_400)
         let plan = PlanGenerator.make(options)
 
         let planWeights: [String: Double] = [
@@ -247,12 +251,12 @@ enum ScreenshotMode {
                 let reps = (e.name == "Incline DB Press" || e.name == "DB Pullover") ? 12 : 10
                 return Array(repeating: (reps, planWeights[e.name]), count: e.sets)
             }
-            let planned = session.date.addingTimeInterval(18 * 3_600)
-            let latest = base.addingTimeInterval(-Double(3 - index) * 7_200)
+            // Early evening on the day the session was planned for (always in the past: 7, 5 and 3 days ago).
+            let finished = session.date.addingTimeInterval(18 * 3_600)
             workouts.append(completedWorkout(daysAgo: 0, name: "\(template.name) · Week \(session.week)", duration: 2_400,
                                              exercises: template.exercises, sets: sets,
                                              planSession: PlanSessionRef(planID: plan.id, index: session.index),
-                                             at: min(planned, latest)))
+                                             at: finished))
         }
 
         // The store returns "last time" by walking backwards, so add oldest first.
