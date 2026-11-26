@@ -193,6 +193,7 @@ struct SessionView: View {
         let leftWidth = (size.width - padding * 2 - gap) * 0.55
         // Grow the ring to fill the left column, within what the height leaves after the exercise card.
         let ringDiameter = min(300, max(160, min(leftWidth - 96, size.height - 400)))
+        let isShort = size.height < 520
         return VStack(spacing: 12) {
             VStack(spacing: 12) {
                 topBar
@@ -214,9 +215,12 @@ struct SessionView: View {
                             lastSetLogSection
                             upNextSection
                             healthSection
+                            // On a short window (iPhone in landscape) pinned controls would leave
+                            // the column almost no room, so they scroll with the rest.
+                            if isShort { controls }
                         }
                     }
-                    controls
+                    if !isShort { controls }
                 }
                 .frame(maxWidth: .infinity)
             }
