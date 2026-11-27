@@ -74,7 +74,105 @@ final class ScreenshotTests: XCTestCase {
         try capture("10", "createPlan", waitFor: "createPlan.form")
     }
 
+    // MARK: - Video clip (Phase 3)
+
+    /// The slow pass recorded for the App Preview and header video: capture/record script runs this
+    /// while `simctl io recordVideo` is recording. Each step is held for `SCREENSHOT_SLOW` seconds
+    /// (default 2.5). Raw length is kept; the video is trimmed afterwards.
+    ///
+    ///   1. Plan tab -> Start on the Up Next card -> Preview -> back -> Start Workout
+    ///   2. Bump the reps stepper, complete the set, let the rest run, adjust the Log card weight
+    ///   3. Jump to the superset scene and let 6 s of countdown play (clock ticking for this clip)
+    ///   4. Show the recap
+    @MainActor func testClipFlow() throws {
+        let hold = TimeInterval(env["SCREENSHOT_SLOW"] ?? "") ?? 2.5
+        XCUIDevice.shared.orientation = env["SCREENSHOT_ORIENTATION"] == "landscape" ? .landscapeLeft : .portrait
+        // record_clip.sh starts the recorder when this appears and stops it at the finish marker,
+        // so the recording holds the flow and not the test runner's start-up.
+        marker("started")
+        defer { marker("finished") }
+
+        // 1. Plan -> Exercises -> Preview -> back -> Start Workout
+        launch(scene: "plan")
+        XCTAssertTrue(element("plan.start").waitForExistence(timeout: 15))
+        pause(hold)
+        element("plan.start").tap()
+        pause(hold)
+        let preview = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Preview'")).firstMatch
+        scrollUntilHittable(preview)
+        preview.tap()
+        pause(hold)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        pause(hold)
+        let start = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Start Workout'")).firstMatch
+        scrollUntilHittable(start)
+        start.tap()
+        pause(1)
+        let continueOnPhone = app.buttons.matching(NSPredicate(format: "label CONTAINS 'iPhone'")).firstMatch
+        XCTAssertTrue(continueOnPhone.waitForExistence(timeout: 10))
+        pause(hold)
+        continueOnPhone.tap()
+
+        // 2. A rep-based set, the rest, the Log card
+        XCTAssertTrue(element("session.repsComplete").waitForExistence(timeout: 10))
+        pause(hold)
+        tapStepperPlus(element("session.repsStepper"))
+        pause(hold)
+        element("session.repsComplete").tap()
+        XCTAssertTrue(element("session.logCard").waitForExistence(timeout: 10))
+        pause(5)
+        tapStepperPlus(element("session.logWeightStepper"))
+        pause(hold)
+
+        // 3. Superset countdown, ticking
+        app.terminate()
+        launch(scene: "superset", live: true)
+        XCTAssertTrue(element("session.countdown").waitForExistence(timeout: 15))
+        pause(6)
+
+        // 4. Recap
+        app.terminate()
+        launch(scene: "recap")
+        XCTAssertTrue(element("recap.screen").waitForExistence(timeout: 15))
+        pause(hold + 1)
+        app.swipeUp()
+        pause(hold)
+    }
+
     // MARK: - Helpers
+
+    @MainActor
+    private func launch(scene: String, live: Bool = false) {
+        app.launchArguments = ["-screenshotMode", "-screenshotScene", scene,
+                               "-AppleLanguages", "(\(lang))", "-AppleLocale", lang,
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]
+        if live { app.launchArguments.append("-screenshotLive") }
+        app.launch()
+    }
+
+    /// Taps the "+" half of a stepper. SwiftUI steppers don't reliably expose Increment/Decrement
+    /// buttons to XCUITest, so tap where the "+" is: at the trailing end of the row.
+    @MainActor
+    private func tapStepperPlus(_ stepper: XCUIElement) {
+        XCTAssertTrue(stepper.waitForExistence(timeout: 5), "stepper not found")
+        let width = stepper.frame.width
+        stepper.coordinate(withNormalizedOffset: CGVector(dx: max(0.5, (width - 24) / width), dy: 0.5)).tap()
+    }
+
+    /// Writes a marker file the recording script waits on (the simulator shares the host's /tmp).
+    private func marker(_ name: String) {
+        FileManager.default.createFile(atPath: "/tmp/eet-clip-\(name)", contents: Data())
+    }
+
+    /// Scrolls toward `element` until it is tappable.
+    @MainActor
+    private func scrollUntilHittable(_ element: XCUIElement, maxSwipes: Int = 10) {
+        var count = 0
+        while !element.isHittable && count < maxSwipes {
+            app.swipeUp()
+            count += 1
+        }
+    }
 
     /// Launches into `scene`, waits for `identifier`, lets the layout settle, then snaps.
     /// `after` runs once the main capture is saved (for extra shots of the same scene).
