@@ -16,19 +16,6 @@ import UIKit
 // dates, wraps it in a `SessionController` that never starts its ticker, and seeds a throwaway
 // history, plan, UserDefaults suite and (on iOS) fake Health values.
 
-enum ScreenshotScene: String, CaseIterable {
-    case plan, manualSet, superset, timedSuperset, restLog, overview, recap, routines, timer, createPlan
-
-    /// The session kind this scene runs as a frozen session, or `nil` for non-session scenes.
-    var sessionKind: SessionKind? {
-        switch self {
-        case .manualSet, .superset, .timedSuperset, .restLog, .overview, .recap: return .workout
-        case .timer: return .timer
-        case .plan, .routines, .createPlan: return nil
-        }
-    }
-}
-
 @MainActor
 enum ScreenshotMode {
     // MARK: Flags
@@ -40,6 +27,9 @@ enum ScreenshotMode {
         guard let i = args.firstIndex(of: "-screenshotScene"), args.indices.contains(i + 1) else { return nil }
         return ScreenshotScene(rawValue: args[i + 1])
     }()
+
+    /// `-screenshotLive`: the session scene runs with a ticking clock (for video clips).
+    static let isLive = ProcessInfo.processInfo.arguments.contains("-screenshotLive")
 
     static var opensPlanSheet: Bool { scene == .overview }
     static var opensCreatePlan: Bool { scene == .createPlan }
@@ -86,72 +76,10 @@ enum ScreenshotMode {
 
     // MARK: Seed: routines
 
-    private static func uuid(_ n: Int) -> UUID {
-        UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n)) ?? UUID()
-    }
-
-    private static func repExercise(_ id: Int, _ name: String, sets: Int, reps: Int, repsMax: Int? = nil,
-                                    weight: Double? = nil, rest: TimeInterval) -> Exercise {
-        var e = Exercise()
-        e.id = uuid(id)
-        e.name = name
-        e.isTimeBased = false
-        e.sets = sets
-        e.targetReps = reps
-        e.targetRepsMax = repsMax
-        e.weight = weight
-        e.restDuration = rest
-        return e
-    }
-
-    private static func timedExercise(_ id: Int, _ name: String, sets: Int = 1, seconds: TimeInterval, rest: TimeInterval) -> Exercise {
-        var e = Exercise()
-        e.id = uuid(id)
-        e.name = name
-        e.isTimeBased = true
-        e.sets = sets
-        e.exerciseDuration = seconds
-        e.restDuration = rest
-        return e
-    }
-
-    static let upperPush: [Exercise] = [
-        repExercise(1, "Bench Press", sets: 4, reps: 8, repsMax: 10, weight: 135, rest: 90),
-        repExercise(2, "Overhead Press", sets: 3, reps: 8, repsMax: 10, weight: 85, rest: 90),
-        repExercise(3, "Incline DB Press", sets: 3, reps: 10, repsMax: 12, weight: 50, rest: 75),
-        repExercise(4, "Triceps Pushdown", sets: 3, reps: 12, repsMax: 15, weight: 50, rest: 60),
-    ]
-
-    /// Squat and deadlift, then a 3-round superset of two timed moves, then calves.
-    static let legDay: [Exercise] = {
-        var jumpSquat = timedExercise(13, "Jump Squat", seconds: 45, rest: 0)
-        jumpSquat.chainRepeatCount = 3
-        var climber = timedExercise(14, "Mountain Climber", seconds: 45, rest: 60)
-        climber.isSupersetContinuation = true
-        return [
-            repExercise(11, "Barbell Back Squat", sets: 4, reps: 6, repsMax: 8, weight: 225, rest: 120),
-            repExercise(12, "Deadlift", sets: 3, reps: 5, weight: 275, rest: 150),
-            jumpSquat,
-            climber,
-            repExercise(15, "Standing Calf Raise", sets: 3, reps: 15, weight: 90, rest: 45),
-        ]
-    }()
-
-    /// A Timed Superset: 10 rounds of three moves in 12:00, the budget shared by the whole chain.
-    static let metCon: [Exercise] = {
-        var squat = repExercise(21, "Goblet Squat", sets: 1, reps: 10, weight: 40, rest: 0)
-        squat.chainRepeatCount = 10
-        squat.groupTimeBudget = 720
-        squat.groupTimeBudgetScope = .wholeChain
-        var pushUp = repExercise(22, "Push-Up", sets: 1, reps: 15, rest: 0)
-        pushUp.isSupersetContinuation = true
-        var swing = repExercise(23, "Kettlebell Swing", sets: 1, reps: 15, weight: 53, rest: 0)
-        swing.isSupersetContinuation = true
-        return [squat, pushUp, swing]
-    }()
-
-    /// Eight 20-second intervals with 10-second breaks.
-    static let tabata: [Exercise] = [timedExercise(31, "Burpees", sets: 8, seconds: 20, rest: 10)]
+    static let upperPush = ScreenshotScenes.upperPush
+    static let legDay = ScreenshotScenes.legDay
+    static let metCon = ScreenshotScenes.metCon
+    static let tabata = ScreenshotScenes.tabata
 
     private static func seedDefaults() {
         let defaults = AppDefaults.store
@@ -172,7 +100,7 @@ enum ScreenshotMode {
 
     /// When the capture was launched. Every seeded date is relative to it, and every scene's
     /// engine starts at it, so "last time" lookups (which only consider earlier workouts) work.
-    static let base = Date()
+    static let base = ScreenshotScenes.base
 
     private typealias SetSpec = (reps: Int?, weight: Double?)
 
@@ -299,75 +227,13 @@ enum ScreenshotMode {
         return built
     }
 
-    /// Runs a fresh engine forward with explicit dates until it reaches `step` (or finishes):
-    /// manual sets take `manualSeconds` each, timed phases run their full length. Returns the
-    /// engine and the moment the current step began.
-    private static func play(_ exercises: [Exercise], toStep step: Int, manualSeconds: TimeInterval = 40,
-                             reps: (PlanStep) -> Int? = { _ in nil }) -> (engine: SessionEngine, clock: Date) {
-        var engine = SessionEngine(exercises: exercises, now: base)
-        var clock = base
-        while engine.state.stepIndex < step, !engine.state.isFinished, let current = engine.currentStep {
-            if current.kind == .work, current.duration == nil {
-                clock = clock.addingTimeInterval(manualSeconds)
-                engine.completeSet(now: clock, reps: reps(current))
-            } else if let end = engine.state.phaseEnd {
-                clock = end
-                engine.tick(now: clock)
-            } else {
-                break
-            }
-        }
-        return (engine, clock)
-    }
-
     private static func makeController(for scene: ScreenshotScene) -> SessionController {
-        let history = WorkoutHistoryStore.shared
-        func controller(_ played: (engine: SessionEngine, clock: Date), elapsedInStep: TimeInterval = 0,
-                        kind: SessionKind = .workout, name: String) -> SessionController {
-            SessionController(frozenEngine: played.engine, now: played.clock.addingTimeInterval(elapsedInStep),
-                              kind: kind, routineName: name, history: history)
+        // `controller(for:)` only routes session scenes here, so the shared builder always has one.
+        guard let frozen = isLive ? ScreenshotScenes.liveSession(for: scene) : ScreenshotScenes.session(for: scene) else {
+            preconditionFailure("\(scene) is not a session scene")
         }
-
-        switch scene {
-        case .manualSet:
-            // Bench Press, set 2 of 4: set 1 logged at 10 reps, 6 s into the next set.
-            let played = play(upperPush, toStep: 2) { $0.round == 1 ? 10 : nil }
-            return controller(played, elapsedInStep: 6, name: "Upper Push")
-
-        case .restLog:
-            // Bench is two sets here so that the next exercise (Overhead Press) differs from the
-            // one just logged. 18 s into the 90 s rest leaves 1:12.
-            var list = upperPush
-            list[0].sets = 2
-            let played = play(list, toStep: 3) { _ in 10 }
-            return controller(played, elapsedInStep: 18, name: "Upper Push")
-
-        case .superset, .overview:
-            // Leg Day: round 2 of the superset, second move (Mountain Climber), 11 s into its 45 s.
-            let played = play(legDay, toStep: 18)
-            return controller(played, elapsedInStep: 11, name: "Leg Day")
-
-        case .timedSuperset:
-            // Thirteen sets at 19 s, then 11 s into the next: 258 s of the 720 s budget gone, 7:42 left.
-            let played = play(metCon, toStep: 13, manualSeconds: 19)
-            return controller(played, elapsedInStep: 11, name: "Friday MetCon")
-
-        case .recap:
-            // The whole of Leg Day, deadlift at 295 lb: heavier than anything in the history.
-            var list = legDay
-            list[1].weight = 295
-            let played = play(list, toStep: .max)
-            return controller(played, name: "Leg Day")
-
-        case .timer:
-            // Tabata, third break, 4 s in: 0:06 left.
-            let played = play(tabata, toStep: 5)
-            return controller(played, elapsedInStep: 4, kind: .timer, name: "Tabata")
-
-        case .plan, .routines, .createPlan:
-            // Not session scenes; `controller(for:)` never routes these here.
-            return controller(play(upperPush, toStep: 0), name: "Upper Push")
-        }
+        return SessionController(frozenEngine: frozen.engine, now: frozen.now, kind: frozen.kind,
+                                 routineName: frozen.routineName, history: WorkoutHistoryStore.shared, live: isLive)
     }
 }
 #endif

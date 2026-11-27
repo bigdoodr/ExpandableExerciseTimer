@@ -106,12 +106,38 @@ final class WatchWorkoutEngine: ObservableObject {
         return !wasFinished && sync.state.isFinished
     }
 
+    #if DEBUG
+    // MARK: Screenshot mode
+
+    /// When set, the display clock is frozen at this moment and the engine never advances.
+    private(set) var frozenNow: Date?
+
+    /// Shows a prebuilt engine state (see `ScreenshotScenes`) without a phone or a ticking clock.
+    func loadFrozen(_ frozen: FrozenSession) {
+        let recap = frozen.engine.recap(now: frozen.now)
+        exercises = frozen.engine.exercises
+        kind = frozen.kind
+        mirror = frozen.engine
+        isPaused = false
+        isWorkoutRunning = true
+        healthKitEnabled = frozen.kind == .workout
+        setsCompleted = recap.setsCompleted
+        exercisesPerformed = recap.exercisesPerformed
+        frozenNow = frozen.now
+        now = frozen.now
+        timeRemaining = frozen.engine.timeRemaining(at: frozen.now) ?? 0
+    }
+    #endif
+
     // MARK: Display timer
 
     /// Called every display tick. The engine is deterministic, so the watch advances its own copy
     /// through timed phases — it keeps counting correctly even when the iPhone is locked and
     /// can't send updates. The iPhone's next sync is still authoritative.
     func tickTimer() {
+        #if DEBUG
+        if frozenNow != nil { return }
+        #endif
         now = Date()
         guard var engine = mirror, !isPaused, !engine.state.isFinished else { return }
         let events = engine.tick(now: now)

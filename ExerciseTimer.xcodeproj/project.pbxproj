@@ -86,6 +86,7 @@
 			membershipExceptions = (
 				Shared/Exercise.swift,
 				Shared/HeartRateZones.swift,
+				Shared/ScreenshotScenes.swift,
 				Shared/SessionEngine.swift,
 				Shared/SessionPresentation.swift,
 				Shared/WatchConnectivityManager.swift,

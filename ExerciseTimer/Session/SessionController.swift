@@ -68,10 +68,11 @@ final class SessionController: ObservableObject {
     #if DEBUG
     /// Screenshot mode: wraps a prebuilt engine and never starts the ticker, so countdowns hold
     /// still at `now`. A finished engine shows its recap straight away (without touching history).
+    /// With `live`, the ticker does run (for a video clip where the countdown should play).
     private(set) var isFrozen = false
 
     init(frozenEngine engine: SessionEngine, now: Date, kind: SessionKind, routineName: String?,
-         history: WorkoutHistoryStore) {
+         history: WorkoutHistoryStore, live: Bool = false) {
         self.kind = kind
         self.routineName = routineName
         self.planSession = nil
@@ -83,8 +84,8 @@ final class SessionController: ObservableObject {
         self.healthKitEnabled = kind == .workout
         self.activityType = .functionalStrengthTraining
         #endif
-        self.isFrozen = true
-        self.hasStarted = true
+        self.isFrozen = !live
+        self.hasStarted = !live
         if engine.state.isFinished {
             let summary = engine.recap(now: now)
             recap = summary
@@ -108,11 +109,20 @@ final class SessionController: ObservableObject {
         if backgroundAudio { sounds.startBackgroundLoop() }
         #endif
         #if canImport(UserNotifications)
+        #if DEBUG
+        // Screenshot mode: no permission prompts over a capture or a recording.
+        if !ScreenshotMode.isActive { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
+        #else
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        #endif
         #endif
         ticker = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
             .sink { [weak self] date in self?.tick(date) }
+        #if DEBUG
+        if !ScreenshotMode.isActive { startPhoneHealthKitIfNeeded() }
+        #else
         startPhoneHealthKitIfNeeded()
+        #endif
         afterChange(events: .phaseChanged, playCue: false)
     }
 

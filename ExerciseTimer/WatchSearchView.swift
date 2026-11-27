@@ -131,6 +131,9 @@ struct WatchSearchView: View {
     /// Launches the companion watch app on the paired Apple Watch.
     private func launchWatchApp() {
 #if os(iOS) && canImport(HealthKit)
+        #if DEBUG
+        if ScreenshotMode.isActive { return }   // no Health permission prompt over a recording
+        #endif
         guard HKHealthStore.isHealthDataAvailable() else { return }
         let config = HealthKitWorkoutManager.workoutConfiguration(for: activityType)
         Task { @MainActor in

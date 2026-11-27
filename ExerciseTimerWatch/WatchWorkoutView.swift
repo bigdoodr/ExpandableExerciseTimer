@@ -73,6 +73,9 @@ struct WatchWorkoutView: View {
                 handleCommand(cmd)
             }
         }
+        #if DEBUG
+        .task { loadScreenshotScene() }
+        #endif
         // Haptic feedback when the person crosses an HR zone boundary.
         .onChange(of: healthKit.currentHRZoneIndex) { oldZone, newZone in
             guard oldZone != nil || newZone != nil, oldZone != newZone else { return }
@@ -381,7 +384,11 @@ struct WatchWorkoutView: View {
             }
             .padding()
         }
+        .screenshotScroll()
         .onReceive(timer) { _ in
+            #if DEBUG
+            if engine.frozenNow != nil { return }   // screenshot mode: hold still
+            #endif
             engine.tickTimer()
             sessionElapsed = Date().timeIntervalSince(workoutStartDate)
             // Push health data to iPhone on every tick (throttled inside forwardHealthDataIfNeeded)
@@ -526,6 +533,7 @@ struct WatchWorkoutView: View {
             }
             .padding()
         }
+        .screenshotScroll()
     }
     
     // MARK: - Computed Properties
@@ -618,6 +626,34 @@ struct WatchWorkoutView: View {
             completedNaturally: completedNaturally
         )
     }
+
+    #if DEBUG
+    /// `-screenshotMode -screenshotScene <name>`: show that scene's frozen engine state, with the
+    /// same fake Health values the phone uses. Scenes that aren't sessions leave the watch alone.
+    private func loadScreenshotScene() {
+        guard let scene = ScreenshotScene.requested, let frozen = ScreenshotScenes.session(for: scene) else { return }
+        healthKit.heartRate = 142
+        healthKit.activeCalories = 186
+        healthKit.currentHRZoneIndex = 2
+        healthKit.isWorkoutActive = true
+        workoutStartDate = frozen.engine.state.startedAt
+        sessionElapsed = frozen.now.timeIntervalSince(workoutStartDate)
+        if frozen.engine.state.isFinished {
+            let recap = frozen.engine.recap(now: frozen.now)
+            recapData = WorkoutRecap(kind: frozen.kind, duration: recap.duration,
+                                     exercisesCompleted: recap.exercisesPerformed, totalExercises: recap.exerciseCount,
+                                     setsCompleted: recap.setsCompleted, totalSets: recap.totalSets,
+                                     heartRate: healthKit.heartRate, calories: healthKit.activeCalories,
+                                     completedNaturally: recap.completedNaturally)
+            recapCreatedAt = Date()
+            // The idle screen clears a recap whenever no workout is "running"; keep it on screen.
+            engine.isWorkoutRunning = true
+            showRecap = true
+        } else {
+            engine.loadFrozen(frozen)
+        }
+    }
+    #endif
 
     private func dismissRecap() {
         showRecap = false
@@ -725,6 +761,36 @@ struct WatchWorkoutView: View {
         }
     }
 }
+
+// MARK: - Screenshot scroll (DEBUG)
+
+extension View {
+    /// Screenshot mode: start scrolled to `-screenshotScroll`; does nothing in Release.
+    @ViewBuilder
+    func screenshotScroll() -> some View {
+        #if DEBUG
+        modifier(ScreenshotScrollModifier())
+        #else
+        self
+        #endif
+    }
+}
+
+#if DEBUG
+private struct ScreenshotScrollModifier: ViewModifier {
+    @State private var position = ScrollPosition()
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .task {
+                guard let y = ScreenshotScene.requestedScrollOffset else { return }
+                try? await Task.sleep(for: .milliseconds(800))   // after the scene has loaded and laid out
+                position.scrollTo(y: y)
+            }
+    }
+}
+#endif
 
 // MARK: - Hold To Confirm
 

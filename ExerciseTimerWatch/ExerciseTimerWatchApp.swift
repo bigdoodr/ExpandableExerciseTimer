@@ -10,6 +10,10 @@ struct ExerciseTimerWatchApp: App {
     @StateObject private var healthKitManager = HealthKitWorkoutManager.shared
     
     init() {
+        #if DEBUG
+        // Screenshot mode: no permission prompt over the capture.
+        if ProcessInfo.processInfo.arguments.contains("-screenshotMode") { return }
+        #endif
         // Request HealthKit authorization at app launch
         Task {
             await HealthKitWorkoutManager.shared.requestAuthorization()
