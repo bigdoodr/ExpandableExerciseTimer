@@ -18,12 +18,17 @@ LANG_CODE=en
 EXPECT="422x514"
 
 # file stem | scene | scroll offset (points)
+#
+# 190 for rest and Timed Superset: the first offset where the "8–10 reps @ …" line above the
+# REST/REPS label has scrolled completely off, so the top ~50 px (the clock row) holds no text
+# but the label itself. (Offsets 185–188 leave that line clipped at the screen's top edge, and at
+# 170 it sits right on top of the clock.) That puts the label level with the clock rather than
+# below it: the line is only ~33 px above the label, so both can't be had.
 CAPTURES=(
   "02_manualSet|manualSet|60"            # workout screen: rep-based set, Hold: Reps Complete
-  "05_restLog|restLog|170"               # rest countdown with "Then: …"
-  "04_timedSuperset|timedSuperset|170"   # Timed Superset "7:42 left" line
-  "07_recap|recap|0"                     # recap, top
-  "07b_recapStats|recap|150"             # recap, stats and Done
+  "05_restLog|restLog|190"               # rest countdown with "Then: …"
+  "04_timedSuperset|timedSuperset|190"   # Timed Superset "7:42 left" line
+  "07_recap|recap|0"                     # recap
 )
 
 echo "▶︎ building the watch app (Debug)"
