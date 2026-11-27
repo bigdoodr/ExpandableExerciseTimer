@@ -248,7 +248,6 @@ struct SessionView: View {
             LastSetLogCard(record: last) { reps, weight in
                 controller.amendLastRecord(reps: reps, weight: weight)
             }
-            .captureID("session.logCard")
         }
     }
 
@@ -300,7 +299,9 @@ struct SessionView: View {
                         .foregroundStyle(.purple)
                 }
                 Text(engine.displayName(ofExercise: index, kind: kind))
+#if DEBUG
                     .captureID("session.exerciseName")
+#endif
                     .font(.largeTitle.bold())
                     .multilineTextAlignment(.center)
                     .minimumScaleFactor(0.6)
@@ -363,13 +364,17 @@ struct SessionView: View {
             Text(engine.phaseLabel(kind: kind))
                 .font(.headline)
                 .foregroundStyle(tint)
+#if DEBUG
                 .captureID("session.phaseLabel")
+#endif
 
             switch style {
             case .timedWork, .rest:
                 CountdownRing(remaining: engine.timeRemaining(at: controller.now) ?? 0,
                               total: phaseLength, tint: tint, diameter: ringDiameter)
+#if DEBUG
                     .captureID("session.countdown")
+#endif
             case .manualWork:
                 if kind == .workout, let exercise = engine.currentExercise, !exercise.isTimeBased {
                     // Starts at the target; AMRAP starts blank and only logs a count if you set one.
@@ -381,6 +386,9 @@ struct SessionView: View {
                             Text("reps").foregroundStyle(.secondary)
                         }
                     }
+#if DEBUG
+                    .captureID("session.repsStepper")
+#endif
                     .padding(.horizontal)
                 }
                 GlassActionButton(tint: .blue, action: {
@@ -388,7 +396,9 @@ struct SessionView: View {
                 }) {
                     Text(kind.manualAdvanceButtonLabel).font(.headline)
                 }
+#if DEBUG
                 .captureID("session.repsComplete")
+#endif
             case .finished:
                 EmptyView()
             }
@@ -398,7 +408,9 @@ struct SessionView: View {
                       systemImage: "timer")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+#if DEBUG
                     .captureID("session.windowLeft")
+#endif
             }
         }
         .padding()
@@ -619,6 +631,9 @@ struct LastSetLogCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Log \(record.exerciseName.isEmpty ? "last set" : record.exerciseName) · Set \(record.round)")
                 .font(.subheadline.bold())
+#if DEBUG
+                .captureID("session.logCard")   // the title only: an id on the card would override its steppers' ids
+#endif
             if let reps = record.reps {
                 Stepper("\(reps) reps", value: Binding(get: { reps }, set: { onChange(max(0, $0), record.weight) }), in: 0...999)
             }
@@ -627,6 +642,9 @@ struct LastSetLogCard: View {
                 Stepper(SessionFormat.weight(weight, unit: record.weightUnit),
                         value: Binding(get: { weight }, set: { onChange(record.reps, max(0, $0)) }),
                         in: 0...2000, step: step)
+#if DEBUG
+                    .captureID("session.logWeightStepper")
+#endif
             }
         }
         .padding()

@@ -29,7 +29,9 @@ struct SessionRecapView: View {
                     }
                 }
             }
+#if DEBUG
             .captureID("recap.screen")
+#endif
             .navigationTitle("Summary")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -224,7 +226,9 @@ struct SessionRecapView: View {
         if !zones.isEmpty {
             if leadingDivider { Divider() }
             HeartRateZoneBreakdown(entries: zones)
+#if DEBUG
                 .captureID("recap.zones")
+#endif
         } else if hr > 0 {
 #if os(iOS)
             if leadingDivider { Divider() }
