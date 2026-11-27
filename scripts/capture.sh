@@ -7,6 +7,16 @@
 #         scripts/capture.sh iphone69 ipad13 only these tags (iphone69 duo_outer duo_inner ipad13 mac)
 #
 # The app must be a DEBUG build: screenshot mode is compiled out of Release.
+#
+# Two ways to capture, per device (the MODE column below):
+#   test    runs ScreenshotTests under `xcodebuild test`. Fine for iPhone and the Duo's outer display.
+#   direct  runs scripts/capture_direct.sh, which installs the app on the simulator YOU have set up
+#           (booted, unfolded, rotated) and drives each scene with launch arguments. Used for the Duo's
+#           inner display and the iPad, because `xcodebuild test` runs on a CLONE of the simulator: the
+#           clone boots folded (Duo) and doesn't inherit the 9:41 status-bar override (iPad). It asks
+#           you to press Return once the simulator is ready, and (unlike the other scripts) replaces
+#           files in the output folder with `mv -f` when it can.
+#           It can't make the scrolled 07b_recapLog shot, which needs a swipe.
 set -euo pipefail
 
 # ---------------- CONFIG ----------------
@@ -30,13 +40,14 @@ test_for() {
 }
 scene_for() { test_for "$1" | sed -E 's/^test[0-9]+_//'; }
 
-# tag | simulator name | orientation | fold state the Duo must be in ("-" = none) | scenes
-# Use the exact simulator names shown in Device Hub.
+# tag | simulator name | orientation | fold state the Duo must be in ("-" = none) | scenes | mode
+# Use the exact simulator names shown in Device Hub. For `direct` devices the orientation is what you
+# rotate the simulator to yourself (landscape: 2853x2007 Duo inner, 2752x2064 iPad).
 DEVICES=(
-  "iphone69|iPhone 17 Pro Max|portrait|-|01 02 03 04 05 06 07 08 09 10"
-  "duo_outer|iPhone Duo|portrait|folded (outer display)|01 02 03 04 05 07"
-  "duo_inner|iPhone Duo|landscape|unfolded (inner display)|01 02 03 05 06 07"
-  "ipad13|iPad Pro 13-inch (M5)|portrait|-|01 02 06 07 08"
+  "iphone69|iPhone 17 Pro Max|portrait|-|01 02 03 04 05 06 07 08 09 10|test"
+  "duo_outer|iPhone Duo|portrait|folded (outer display)|01 02 03 04 05 07|test"
+  "duo_inner|iPhone Duo|landscape|unfolded (inner display)|01 02 03 05 06 07|direct"
+  "ipad13|iPad Pro 13-inch (M5)|landscape|-|01 02 06 07 08|direct"
 )
 # Mac: window captures of these scenes (screencapture -l), window sized for 2880x1800 on a Retina display.
 MAC_SCENES="01 02 06 07"
@@ -153,6 +164,16 @@ PY
   for f in "$OUT_DIR/${TAG}_"*.png; do [[ -e "$f" ]] && check_size "$f" "$TAG"; done
 }
 
+# Hands a device to scripts/capture_direct.sh (zsh), which does its own build, 9:41 override, size check
+# and prompt. Needs a terminal.
+run_direct() {
+  local TAG="$1" NAME="$2" SCENES="$3" n list=""
+  SCENES="${SCENES_ONLY:-$SCENES}"
+  for n in $SCENES; do list+="$n:$(scene_for "$n") "; done
+  echo "▶︎ $TAG ($NAME): capture_direct.sh, scenes: ${list% }"
+  REPO="$REPO" DEVICE_NAME="$NAME" PREFIX="$TAG" SCENES="${list% }" zsh "$REPO/scripts/capture_direct.sh"
+}
+
 run_mac() {
   local TAG=mac
   echo "▶︎ mac scenes: $MAC_SCENES"
@@ -186,8 +207,9 @@ run_mac() {
 }
 
 for entry in "${DEVICES[@]}"; do
-  IFS='|' read -r TAG NAME ORIENT FOLD SCENES <<<"$entry"
-  wanted "$TAG" && run_simulator "$TAG" "$NAME" "$ORIENT" "$FOLD" "$SCENES"
+  IFS='|' read -r TAG NAME ORIENT FOLD SCENES MODE <<<"$entry"
+  wanted "$TAG" || continue
+  if [[ "$MODE" == direct ]]; then run_direct "$TAG" "$NAME" "$SCENES"; else run_simulator "$TAG" "$NAME" "$ORIENT" "$FOLD" "$SCENES"; fi
 done
 wanted mac && run_mac
 
